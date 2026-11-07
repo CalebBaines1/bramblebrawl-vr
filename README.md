@@ -13,10 +13,25 @@ whose files are imported unchanged as the first commit.
 - `js/ui.js`: input, HUD, squad pick, bestiary, settings
 - `js/audio.js`: synthesized sound effects and music
 - `js/tutorial.js`: the scripted practice match
+- `js/xr.js`: Quest mixed reality and VR (WebXR)
+- `lib/three.min.js`: three.js r128, vendored so the game loads offline
 
-## Run it
+## Play it
 
-Serve the folder over HTTP and open it in a browser, for example `npx serve .` then visit the URL.
+- **Quest:** open https://calebbaines1.github.io/bramblebrawl-vr/ in the Meta Quest Browser and choose
+  **Play on your table** (mixed reality, Quest 3/3S) or **Play in VR**.
+  - Look at your table and pull the trigger (or pinch) to put the board down. Squeeze the grip, or press
+    **Move board**, to move it later.
+  - Point and pull the trigger (or pinch) exactly where you would click with a mouse: pick a card from the tray,
+    drag it onto a lane, drag a creature onto an enemy, hold to crush a spell, and so on.
+- **Desktop:** the same link works in any browser with a mouse.
+- **Locally:** serve the folder over HTTP, for example `python3 -m http.server`, and open it.
+
+## How the XR layer works
+
+`js/xr.js` knows nothing about the rules. It shrinks the board group onto the table, mirrors the HTML HUD and
+menus onto floating panels by drawing the DOM into canvas textures, and turns controller or hand rays into
+ordinary pointer events. So every desktop interaction works in the headset unchanged.
 
 ## Plan
 
