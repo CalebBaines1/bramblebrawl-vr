@@ -9,14 +9,18 @@
   const Sc = () => MW.Scene;
   const $ = s => document.querySelector(s);
 
-  /* Board scale: the meadow is about 27 units wide, so 0.03 m per unit gives a board about 80 cm across. */
-  const SCALE = { ar: 0.03, vr: 0.03 };
+  /* Board scale: the meadow is about 27 units wide, so 0.045 m per unit gives a board about 1.2 m across. */
+  const SCALE = { ar: 0.045, vr: 0.045 };
+  const UNIT_SCALE = 1.3; /* creatures drawn this much larger in XR so they read from standing height */
   const PX = 0.00058; /* metres per CSS pixel on HUD panels */
 
+  /* extension points for js/xrhands.js (card hand and opponent avatar) */
+  const hooks = { frame: [], aim: [], beforeSession: [], start: [], stop: [] };
   const st = {
     session: null, mode: null, refSpace: null, placing: false, placed: false,
     hitSource: null, viewerSpace: null, reticle: null, rig: null, boardPos: new T.Vector3(), boardYaw: 0,
-    pointers: [], active: 0, panels: [], dirty: true, lastPanelDraw: 0, lastClient: { x: 0, y: 0 }
+    pointers: [], active: 0, panels: [], dirty: true, lastPanelDraw: 0, lastClient: { x: 0, y: 0 },
+    perf: { frames: 0, frameMs: 0, panelMs: 0, panelPasses: 0, uploads: 0 }
   };
 
   /* ---------- window.requestAnimationFrame stalls while a headset session runs, so we pump it ---------- */
@@ -121,7 +125,7 @@
     { key: 'screen', find: () => { const s = [...document.querySelectorAll('.panel-screen')].find(e => !e.hidden); return s && s.querySelector('.panel'); }, at: [0, 0.36, 0.08], tilt: 0, px: 0.00062 },
     { key: 'modal', find: () => $('#modal.show .panel'), at: [0, 0.34, 0.18], tilt: 0, px: 0.0007 },
     { key: 'tray', find: () => visible('#hud') && $('#hud .tray'), at: [0, 0.07, 0.5], tilt: -0.85, px: PX },
-    { key: 'top', find: () => visible('#hud') && $('#hud .hud-top'), at: [0, 0.42, -0.44], tilt: 0.12, px: 0.0008 },
+    { key: 'top', find: () => visible('#hud') && $('#hud .hud-top'), at: [0, 0.58, -0.44], tilt: 0.12, px: 0.0008 },
     { key: 'coach', find: () => { const c = $('#coach'); return c && c.style.display === 'block' ? c.querySelector('.chip') : null; }, at: [0.55, 0.3, 0.1], tilt: 0, yaw: -0.5, px: 0.0007 },
     { key: 'toast', find: () => { const t = $('#toast'); return t && t.children.length ? t : null; }, at: [0, 0.27, 0.22], tilt: -0.2, px: 0.0007 },
     { key: 'tip', find: () => { const t = $('#tip'); return t && t.style.display === 'block' ? t : null; }, at: [-0.52, 0.2, 0.36], tilt: -0.3, yaw: 0.45, px: 0.0007 },
@@ -130,6 +134,7 @@
   ];
   function visible(sel) { const e = $(sel); return !!e && !e.hidden && getComputedStyle(e).display !== 'none'; }
 
+  function hashStr(t) { let h = 2166136261; for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
   function makePanel(def) {
     const canvas = document.createElement('canvas');
     const tex = new T.CanvasTexture(canvas);
@@ -138,13 +143,16 @@
     const mesh = new T.Mesh(new T.PlaneGeometry(1, 1), mat);
     mesh.renderOrder = 20; mesh.visible = false;
     const holder = new T.Group(); holder.add(mesh);
-    holder.position.set(def.at[0], def.at[1], def.at[2]);
+    layoutPanel(holder, def, 1);
     holder.rotation.set(def.tilt || 0, def.yaw || 0, 0, 'YXZ');
     st.rig.add(holder);
     return { def, canvas, ctx: canvas.getContext('2d'), tex, mesh, holder, el: null, rect: null, sig: '' };
   }
+  /* panel positions were laid out for a 0.03 m/unit board; spread them out as the board grows */
+  function layoutPanel(holder, def, k) { holder.position.set(def.at[0] * k, def.at[1] * (1 + (k - 1) * 0.5), def.at[2] * k); }
   function drawPanels(now, force) {
     if (!force && now - st.lastPanelDraw < (st.dirty ? 120 : 400)) return;
+    const t0 = performance.now();
     st.lastPanelDraw = now;
     const dpr = 1.6;
     /* card hover lifts and crush animations move boxes without DOM changes, so redraw a few times a second anyway */
@@ -154,6 +162,10 @@
       if (!el) { p.mesh.visible = false; p.el = null; return; }
       const r = el.getBoundingClientRect();
       if (r.width < 4 || r.height < 4) { p.mesh.visible = false; return; }
+      /* only redraw a panel whose content, size or styling changed: texture uploads are the expensive part */
+      const sig = el.outerHTML.length + ':' + hashStr(el.outerHTML) + ':' + Math.round(r.width) + 'x' + Math.round(r.height) + ':' + (el === p.el) + ':' + Math.floor(now / 2000);
+      if (sig === p.sig && p.mesh.visible) return;
+      p.sig = sig;
       const pad = 8;
       const w = Math.ceil(r.width + pad * 2), h = Math.ceil(r.height + pad * 2);
       if (p.canvas.width !== Math.ceil(w * dpr) || p.canvas.height !== Math.ceil(h * dpr)) {
@@ -164,7 +176,7 @@
       g.setTransform(dpr, 0, 0, dpr, 0, 0);
       g.clearRect(0, 0, w, h);
       try { drawEl(g, el, r.left - pad, r.top - pad, 1); } catch (e) { console.error(e); }
-      p.tex.needsUpdate = true;
+      p.tex.needsUpdate = true; st.perf.uploads++;
       p.el = el; p.rect = { left: r.left - pad, top: r.top - pad, width: w, height: h };
       p.mesh.scale.set(w * p.def.px, h * p.def.px, 1);
       p.mesh.visible = true;
@@ -172,6 +184,7 @@
     /* a menu or modal covers the board, so tuck the HUD panels away under it */
     const blocking = st.panels.some(p => p.mesh.visible && (p.def.key === 'screen' || p.def.key === 'modal' || p.def.key === 'title'));
     st.panels.forEach(p => { if (blocking && (p.def.key === 'tray' || p.def.key === 'top')) p.mesh.visible = false; });
+    st.perf.panelMs += performance.now() - t0; st.perf.panelPasses++;
   }
 
   /* ---------- pointers ---------- */
@@ -204,8 +217,10 @@
   function aim(p) {
     const ray = pointerRay(p);
     raycaster.ray.copy(ray);
-    const meshes = st.panels.filter(q => q.mesh.visible).map(q => q.mesh);
+    const meshes = st.panels.filter(q => q.mesh.visible && q.holder.visible).map(q => q.mesh);
     const hit = raycaster.intersectObjects(meshes, false)[0];
+    /* things held in your hand (cards) win over panels behind them */
+    for (const h of hooks.aim) { const r = h(raycaster, p); if (r && (!hit || r.dist < hit.distance)) return r; }
     if (hit) {
       const panel = st.panels.find(q => q.mesh === hit.object);
       const r = panel.rect;
@@ -236,6 +251,7 @@
     target.dispatchEvent(ev);
   }
   function targetFor(a) {
+    if (a.kind === 'card') return a.el;
     if (a.kind === 'panel') return elementAt(a.panel, a.x, a.y) || document.body;
     if (a.kind === 'board') return Sc().renderer.domElement;
     return document.body;
@@ -349,10 +365,15 @@
   /* ---------- session ---------- */
   function onFrame(now, frame) {
     if (!st.session) return;
+    const t0 = performance.now();
     pumpRaf(now);
     updatePlacement(frame);
     updatePointers();
     drawPanels(now);
+    hooks.frame.forEach(f => { try { f(now, frame); } catch (e) { console.error(e); } });
+    /* the tray is redundant while your hand of cards is up */
+    st.panels.forEach(p => { if (p.def.key === 'tray') p.holder.visible = !st.hideTray; });
+    st.perf.frames++; st.perf.frameMs += performance.now() - t0;
   }
 
   async function start(mode) {
@@ -377,6 +398,7 @@
       st.panels = PANEL_DEFS.map(makePanel);
       st.pointers = [makePointer(0), makePointer(1)];
       st.reticle = buildReticle();
+      hooks.beforeSession.forEach(f => f());
     }
     await renderer.xr.setSession(session);
     st.refSpace = renderer.xr.getReferenceSpace();
@@ -388,7 +410,12 @@
       } catch (e) { st.hitSource = null; }
     }
     st.rig.visible = true;
-    Sc().setXR({ mode, onFrame });
+    Sc().setXR({ mode, onFrame, unitScale: UNIT_SCALE });
+    const K = SCALE[mode] / 0.03;
+    st.panels.forEach(p => layoutPanel(p.holder, p.def, K));
+    /* fixed foveated rendering: full detail where you look, cheaper at the edges */
+    const layer = session.renderState && session.renderState.baseLayer;
+    if (layer && 'fixedFoveation' in layer) try { layer.fixedFoveation = 1; } catch (e) { /* not supported */ }
     const d = defaultSpot();
     st.boardPos.copy(d.pos); st.boardYaw = d.yaw;
     Sc().placeBoard(d.pos, d.yaw, SCALE[mode]);
@@ -398,6 +425,7 @@
     if (mode === 'ar') startPlacing(); else confirmPlacement();
     session.addEventListener('end', stop);
     document.body.classList.add('in-xr');
+    hooks.start.forEach(f => f(mode));
   }
   function stop() {
     if (!st.session) return;
@@ -407,6 +435,7 @@
     if (st.rig) st.rig.visible = false;
     st.pointers.forEach(p => { p.dot.visible = false; p.connected = false; });
     Sc().setXR(null);
+    hooks.stop.forEach(f => f());
     unpatchRaf();
     document.body.classList.remove('in-xr');
   }
@@ -451,6 +480,6 @@
     setupButtons();
   }
 
-  MW.XR = { init, start, end, startPlacing, get active() { return !!st.session; }, get mode() { return st.mode; }, support: { ar: false, vr: false }, _st: st, _drawEl: drawEl };
+  MW.XR = { init, start, end, startPlacing, get active() { return !!st.session; }, get mode() { return st.mode; }, support: { ar: false, vr: false }, _st: st, _drawEl: drawEl, hooks, scale: () => SCALE[st.mode] || SCALE.ar };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else setTimeout(init, 0);
 })(typeof window !== 'undefined' ? window : globalThis);
