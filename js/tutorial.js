@@ -1,4 +1,4 @@
-/* Bramblebrawl onboarding: a scripted practice match. Each step says what to do, highlights where,
+/* Hivebound onboarding: a scripted practice match. Each step says what to do, highlights where,
    and only allows that action, so nobody can get lost. */
 (function (root) {
   'use strict';

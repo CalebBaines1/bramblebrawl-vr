@@ -1,4 +1,4 @@
-/* Bramblebrawl scene: the meadow, camera, creature views, effects, and the event player that turns
+/* Hivebound scene: the meadow, camera, creature views, effects, and the event player that turns
    rules events into animation. Nothing here changes game state; it only shows it. */
 (function (root) {
   'use strict';

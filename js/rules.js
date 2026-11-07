@@ -1,4 +1,4 @@
-/* Bramblebrawl rules engine. Pure logic: no DOM, no rendering.
+/* Hivebound rules engine. Pure logic: no DOM, no rendering.
    The PC build and a future VR build both drive this same module. */
 (function (root) {
   'use strict';

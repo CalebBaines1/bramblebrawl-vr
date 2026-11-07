@@ -1,4 +1,4 @@
-/* Bramblebrawl models: every creature and structure is built from primitives and returned as a rig
+/* Hivebound models: every creature and structure is built from primitives and returned as a rig
    with named parts, so the animation layer can move heads, legs, wings and flames independently.
    Rigs face +z. Swap any builder for a loaded GLB later without touching the animation code. */
 (function (root) {

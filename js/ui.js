@@ -1,4 +1,4 @@
-/* Bramblebrawl UI: screens, HUD, input gestures, match flow, tips and settings.
+/* Hivebound UI: screens, HUD, input gestures, match flow, tips and settings.
    Talks to the rules through MW.Rules and shows results through MW.Scene. */
 (function (root) {
   'use strict';
@@ -1139,7 +1139,7 @@
       if (!progress.tutorialDone) {
         modal({
           eye: 'Welcome', title: 'New to the meadow?',
-          body: 'Bramblebrawl is a creature battler you play with your hands: you throw creatures at your rival\u2019s, crush spells in your fist, and work slingshots and bellows. The tutorial teaches all of it in about three minutes.',
+          body: 'Hivebound is a creature battler you play with your hands: you throw creatures at your rival\u2019s, crush spells in your fist, and work slingshots and bellows. The tutorial teaches all of it in about three minutes.',
           buttons: [{ label: 'I know how to play', fn: () => { progress.tutorialDone = true; saveProgress(); } }, { label: 'Start the tutorial', primary: true, fn: () => { A.init(); MW.Tutorial.start(); } }]
         });
       }

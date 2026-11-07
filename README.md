@@ -1,8 +1,10 @@
-# Bramblebrawl VR
+# Hivebound
 
 A lane-based creature card battler for Meta Quest, played on your real table in mixed reality
-(with a full-VR fallback). It started as the Bramblebrawl desktop prototype (a claude.ai artifact),
-whose files are imported unchanged as the first commit.
+(with a full-VR fallback). Every board shares the same layout (five lanes, a brook, a hive Keeper in an oak at
+each end); the first board is the Bramble meadow. It started as the Bramblebrawl desktop prototype
+(a claude.ai artifact), whose files are imported unchanged as the first commit. The repository keeps its
+original name, `bramblebrawl-vr`, so the GitHub Pages link stays the same.
 
 ## Layout
 
