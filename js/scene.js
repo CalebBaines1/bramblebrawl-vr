@@ -506,9 +506,10 @@
   /* ---------- Keepers: each side's oak and hive, the thing creatures hit when their lane is open ---------- */
   const keepers = [];
   let matchOn = false;
+  const KEEPER_X = 12.5;
   function buildKeepers() {
     [0, 1].forEach(side => {
-      const sg = side === 0 ? 1 : -1, sc = 1.1, g = new T.Group();
+      const sg = side === 0 ? 1 : -1, sc = 1.1, g = new T.Group(), kx = -sg * KEEPER_X;
       g.add(mesh(new T.CylinderGeometry(0.4 * sc, 0.7 * sc, 3.2 * sc, 9), M(0x6b4a2a, { flatShading: true }), 0, 1.6 * sc, 0));
       const crown = new T.Group();
       const greens = [0x3f8a2d, 0x4a9a34, 0x367a26];
@@ -523,15 +524,17 @@
       band.rotation.x = Math.PI / 2; hive.add(band);
       const door = mesh(new T.CircleGeometry(0.16, 12), M(0x3a2a10), 0, -0.35, -sg * 0.79); door.rotation.y = side === 0 ? Math.PI : 0; hive.add(door);
       g.add(hive);
-      g.position.set(0, 0, sg * 11);
+      /* the oaks stand in the back corners, beside the lanes, so your own never hides the board */
+      g.position.set(kx, 0, sg * 11); g.rotation.y = -sg * 0.35;
       scene.add(g);
       const ring = new T.Mesh(new T.RingGeometry(1.6, 1.9, 36), new T.MeshBasicMaterial({ color: 0xe24b4a, transparent: true, opacity: 0.85, side: T.DoubleSide, depthWrite: false }));
-      ring.rotation.x = -Math.PI / 2; ring.position.set(0, 0.07, sg * 9.6); ring.visible = false; scene.add(ring);
+      ring.rotation.x = -Math.PI / 2; ring.position.set(kx + sg * 0.5, 0.07, sg * 9.6); ring.visible = false; scene.add(ring);
       const c = document.createElement('canvas'); c.width = 320; c.height = 84;
       const tex = new T.CanvasTexture(c);
       const sprite = new T.Sprite(new T.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
-      sprite.scale.set(3.4, 0.9, 1); sprite.position.set(0, 5.1, sg * 9.7); sprite.renderOrder = 15; sprite.visible = false; scene.add(sprite);
-      keepers[side] = { side, g, crown, hive, ring, sprite, ctx: c.getContext('2d'), tex, hp: 25, maxHp: 25, pos: new T.Vector3(0, 3.0, sg * 9.7), ground: new T.Vector3(0, 0, sg * 9.4) };
+      sprite.scale.set(3.4, 0.9, 1); sprite.position.set(kx, 5.1, sg * 9.7); sprite.renderOrder = 15; sprite.visible = false; scene.add(sprite);
+      const hp = hive.getWorldPosition(new T.Vector3());
+      keepers[side] = { side, g, crown, hive, ring, sprite, ctx: c.getContext('2d'), tex, hp: 25, maxHp: 25, pos: hp, ground: new T.Vector3(hp.x, 0, sg * 9.4) };
       drawKeeper(keepers[side]);
     });
   }
