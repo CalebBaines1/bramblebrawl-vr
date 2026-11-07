@@ -67,7 +67,7 @@
       allow: (k, i) => (k === 'crush' && i.card === 'thunderclap') || (k === 'cast' && i.card === 'thunderclap'), on: { cast: d => d.card === 'thunderclap' } },
     { t: 'Finish it', p: 'Mossback is still across from the golem. Finish the job.', todo: 'Drag Mossback onto the golem', enter: () => markUnit(1, 'pebble_golem'),
       allow: (k, i) => (k === 'attackStart' && i.id === 'mossback') || (k === 'attack' && i.id === 'mossback') },
-    { t: 'You\u2019re ready', p: 'That\u2019s the whole game: pick your lanes, throw creatures at what\u2019s across, hit the Keeper when a lane opens, slide sideways to change matchups, crush spells, work your structures, and save your Surge. Next, pick a squad of five and face a real bramble.', final: true }
+    { t: 'You\u2019re ready', p: 'That\u2019s the whole game: pick your lanes, throw creatures at what\u2019s across, hit the Keeper when a lane opens, slide sideways to change matchups, crush spells, work your structures, and save your Surge. Real battles add a few twists: a deck of eight, Prime moves, and the Brawl. Check How to play, then face a real bramble.', final: true }
   ];
 
   function render() {

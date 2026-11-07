@@ -27,6 +27,21 @@ whose files are imported unchanged as the first commit.
 - **Desktop:** the same link works in any browser with a mouse.
 - **Locally:** serve the folder over HTTP, for example `python3 -m http.server`, and open it.
 
+## Rules
+
+Every match except the tutorial uses the Brawl rules (the tutorial keeps the original rules so its script
+still works). All numbers live in `RULES.v2` in `js/rules.js`.
+
+- Keepers have 15 health. A match lasts at most 8 rounds; if both Keepers stand, the healthier one wins.
+- From round 7 the meadow overgrows: every hit on a Keeper counts double.
+- Points refill each round to round + 1 (2, 3, 4 ... up to 7) and don't carry over. The second player gets
+  +1 point in rounds 1 to 3 (this evened out first-player advantage in simulated AI-vs-AI games).
+- Your squad of 8 is a deck: start with 3 creatures in reserve and draw 1 each turn.
+- When an attack defeats a creature, the extra damage spills over into that side's Keeper.
+- **Prime:** once per match, hold one of your creatures to fire its own trick (Shell up, Flare, Rockfall ...).
+- **Brawl:** after each round, if anyone has a structure, both players work their structures at the same time
+  for 15 seconds. Structures only fire in the Brawl. The Bellows buff lasts into your next turn.
+
 ## How the XR layer works
 
 `js/xr.js` knows nothing about the rules. It shrinks the board group onto the table, mirrors the HTML HUD and

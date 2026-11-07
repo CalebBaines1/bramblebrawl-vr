@@ -117,19 +117,20 @@
     s += '<text x="120" y="104" text-anchor="middle" font-family="Nunito, sans-serif" font-weight="700" font-size="11" fill="#9a8c6c">beats \u2192</text>';
     return s;
   })();
+  const SQ = () => R.RULES.v2.squadSize;
   function squadEnter() {
     $('#hud').hidden = true;
-    const valid = Array.isArray(progress.squad) && progress.squad.length === 5 && progress.squad.every(id => R.CREATURES[id]);
+    const valid = Array.isArray(progress.squad) && progress.squad.length === SQ() && progress.squad.every(id => R.CREATURES[id]);
     chosen = valid ? progress.squad.slice() : [];
     $('#wheel').innerHTML = WHEEL;
     renderSquad();
   }
   function renderSquad() {
     const ids = Object.keys(R.CREATURES);
-    $('#pool').innerHTML = ids.map(id => creatureCardHTML(id, { kw: true, pick: true, pickN: chosen.includes(id) ? chosen.indexOf(id) + 1 : '', cls: chosen.includes(id) ? 'sel' : (chosen.length >= 5 ? 'dim' : '') })).join('');
-    $('#slots').innerHTML = [0, 1, 2, 3, 4].map(i => '<div class="slot">' + (chosen[i] ? '<img src="' + PORTRAITS[chosen[i]] + '" alt="' + esc(R.CREATURES[chosen[i]].name) + '">' : '') + '</div>').join('') +
-      '<span style="align-self:center;font-weight:700;color:var(--ink-2)">' + chosen.length + ' / 5 &middot; cost ' + chosen.reduce((a, id) => a + R.CREATURES[id].cost, 0) + '</span>';
-    $('#sq-start').disabled = chosen.length !== 5;
+    $('#pool').innerHTML = ids.map(id => creatureCardHTML(id, { kw: true, pick: true, pickN: chosen.includes(id) ? chosen.indexOf(id) + 1 : '', cls: chosen.includes(id) ? 'sel' : (chosen.length >= SQ() ? 'dim' : '') })).join('');
+    $('#slots').innerHTML = Array.from({ length: SQ() }, (_, i) => i).map(i => '<div class="slot">' + (chosen[i] ? '<img src="' + PORTRAITS[chosen[i]] + '" alt="' + esc(R.CREATURES[chosen[i]].name) + '">' : '') + '</div>').join('') +
+      '<span style="align-self:center;font-weight:700;color:var(--ink-2)">' + chosen.length + ' / ' + SQ() + ' &middot; cost ' + chosen.reduce((a, id) => a + R.CREATURES[id].cost, 0) + '</span>';
+    $('#sq-start').disabled = chosen.length !== SQ();
     $$('#diffs button').forEach(b => b.classList.toggle('on', b.dataset.d === progress.diff));
   }
   function quickPick() {
@@ -137,8 +138,8 @@
     Object.keys(R.CREATURES).forEach(id => { const f = R.CREATURES[id].fam; (byFam[f] = byFam[f] || []).push(id); });
     const out = [];
     ['Meadow', 'Pond', 'Thicket', 'Stone'].forEach(f => out.push(byFam[f][Math.floor(Math.random() * byFam[f].length)]));
-    const rest = Object.keys(R.CREATURES).filter(id => !out.includes(id));
-    out.push(rest[Math.floor(Math.random() * rest.length)]);
+    const rest = Object.keys(R.CREATURES).filter(id => !out.includes(id)).sort(() => Math.random() - 0.5);
+    while (out.length < SQ() && rest.length) out.push(rest.pop());
     chosen = out; A.play('select'); renderSquad();
   }
 
@@ -169,21 +170,25 @@
 
   /* how to play */
   function howtoEnter() {
-    const V = R.VERBS;
+    const V = R.VERBS, RV = R.RULES.v2;
     $('#howto').innerHTML =
-      '<section><h3>The goal</h3><p>Each side has a <b>Keeper</b>, the hive in its oak, with 25 health. Knock the enemy Keeper to 0, or defeat every creature they brought, to win. Each side has a squad of five; up to four can be on the meadow at once.</p></section>' +
-      '<section><h3>Your turn</h3><ul><li>You gain 2 points each turn, up to 10. Unspent points carry over.</li><li>Spend points to place creatures from your reserve, build structures, and cast spells.</li><li>Each creature can attack once per turn. Creatures that just arrived are sleepy (Zz) and attack next turn.</li><li>When your field is empty, your next creature is free.</li></ul></section>' +
+      '<section><h3>The goal</h3><p>Each side has a <b>Keeper</b>, the hive in its oak, with ' + RV.keeperHp + ' health. Knock the enemy Keeper to 0, or defeat every creature they brought, to win. A battle lasts at most ' + RV.rounds + ' rounds; if both Keepers are still standing, the healthier one wins.</p></section>' +
+      '<section><h3>Your deck</h3><p>Your squad of ' + RV.squadSize + ' is shuffled into a deck. You start with ' + RV.startHand + ' creatures in your reserve and draw one more at the start of each of your turns. Up to four can be on the meadow at once.</p></section>' +
+      '<section><h3>Your turn</h3><ul><li>Your points refill every round: 2 in round 1, 3 in round 2, and so on up to ' + RV.ptsCap + '. Spend them, because they don\u2019t carry over. The player who goes second gets 1 extra point in the first ' + RV.secondBonusRounds + ' rounds.</li><li>Spend points to place creatures, build structures, and cast spells.</li><li>Each creature can attack once per turn. Creatures that just arrived are sleepy (Zz) and attack next turn.</li><li>When your field is empty, your next creature is free.</li><li>When an attack defeats a creature, the extra damage spills over into their Keeper.</li></ul></section>' +
+      '<section><h3>Prime</h3><p>Once per battle, each creature can be <b>Primed</b>: press and hold it for a moment on your turn to fire its own trick. Hover a creature to see what its Prime does.</p></section>' +
+      '<section><h3>Overgrowth</h3><p>From round ' + RV.overgrowthFrom + ', the meadow overgrows and every hit on a Keeper counts double.</p></section>' +
       '<section><h3>Five lanes</h3><p>Each side has five lane slots, plus a stump behind each for a structure. Up to four creatures can be on the field, so one lane is always open. A creature attacks whatever stands <b>directly across</b> its lane. If nothing is across, it hits the enemy <b>Keeper</b> instead. Flying creatures can hit any creature or the Keeper, and spells can hit any creature.</p><p>Drag a creature sideways into an empty neighbouring lane to move it. Moving uses its attack for the turn.</p></section>' +
       '<section><h3>Families</h3><p>Meadow beats Stone, Stone beats Pond, Pond beats Thicket, Thicket beats Meadow. Attacking the family you beat deals half again as much (rounded up). Neutral creatures never trade advantage.</p></section>' +
       '<section><h3>Spells: grab, crush, gesture</h3><p>Attacking draws one of that creature\u2019s own spells into your hand. To cast: press and hold the card until it crushes in your fist. The spell is now armed. Then do its gesture within 10 seconds or it fizzles.</p><ul>' +
       Object.keys(V).map(k => '<li><b style="color:' + VCOL[k] + '">' + V[k].name + ':</b> ' + V[k].how + '</li>').join('') + '</ul></section>' +
       '<section><h3>Surge</h3><p>Every spell you cast fills your Surge meter. At 3 you get a free Surge card: Thunderclap (3 damage to every enemy), Bloom (heal your side) or Stampede (everyone attacks again).</p></section>' +
-      '<section><h3>Structures</h3><p>Build up to two on your half for 2 points each, then work them by hand once per turn. The <b>Slingshot</b>: press on it, pull back away from your target, let go. Direct hits deal 3, grazes 1. The <b>Bellows</b>: pump up to three times; the nearest ally gets +1 attack per pump this turn.</p></section>' +
+      '<section><h3>Structures and the Brawl</h3><p>Build up to two on your half for 2 points each. Structures are worked in the <b>Brawl</b>: a ' + RV.brawlSecs + '-second window after each round where both players work their structures at the same time. Each structure works once per Brawl. The <b>Slingshot</b>: press on it, pull back away from your target, let go. Direct hits deal 3, grazes 1. The <b>Bellows</b>: pump up to three times; the nearest ally gets +1 attack per pump on your next turn.</p></section>' +
       '<section><h3>Keywords</h3><ul>' + Object.keys(R.KEYWORDS).map(k => '<li><b>' + R.KEYWORDS[k].name + ':</b> ' + esc(R.KEYWORDS[k].text) + '</li>').join('') + '</ul></section>' +
       '<section><h3>Controls</h3><table class="ctl">' +
       '<tr><td>Place a creature</td><td>Click its card, then click a glowing lane (or drag the card onto it)</td></tr>' +
       '<tr><td>Attack</td><td>Drag your creature onto an enemy, or click it then click the enemy</td></tr>' +
       '<tr><td>Hit the Keeper</td><td>When nothing is across, drag your creature onto the enemy hive</td></tr>' +
+      '<tr><td>Prime</td><td>Press and hold one of your creatures</td></tr>' +
       '<tr><td>Change lanes</td><td>Drag your creature into a glowing blue neighbouring lane</td></tr>' +
       '<tr><td>Cast a spell</td><td>Hold the card to crush it, then do the gesture</td></tr>' +
       '<tr><td>Look around</td><td>Drag empty grass or right-drag; scroll to zoom; <kbd>C</kbd> resets</td></tr>' +
@@ -268,7 +273,7 @@
   const Game = { st: null, diff: 'normal', busy: false, paused: false, tutorial: false, squad: null, foeSquad: null, names: {}, resumeFns: [] };
   const DIFF_NAME = { easy: 'Sleepy bramble', normal: 'Bramble', hard: 'Old bramble', tutorial: 'Training patch' };
 
-  function randomSquad() { return Object.keys(R.CREATURES).sort(() => Math.random() - 0.5).slice(0, 5); }
+  function randomSquad() { return Object.keys(R.CREATURES).sort(() => Math.random() - 0.5).slice(0, SQ()); }
 
   async function startMatch(o) {
     o = o || {};
@@ -334,6 +339,7 @@
 
   async function endTurn() {
     const st = Game.st;
+    if (st && st.phase === 'brawl' && Game.brawl) { if (!Game.busy && mode.k === 'idle') { A.play('click'); Game.brawl.done = true; } return; }
     if (!st || Game.busy || st.over || st.active !== 0 || Game.paused) return;
     if (!permit('endTurn')) return;
     cancelMode();
@@ -369,10 +375,47 @@
     const ev = R.endTurn(st, 1);
     await playSafe(ev, st);
     if (Game.st !== st) return;
+    if (st.phase === 'brawl') { await brawlWindow(st); if (Game.st !== st) return; }
     Game.busy = false; render();
     if (st.over) { finish(); return; }
-    banner('Your turn', 'mine');
+    const rd = R.roundOf(st);
+    if (rd === R.RULES.v2.overgrowthFrom && R.isV2(st)) { banner('Overgrowth! Keeper hits count double', 'theirs'); await Sc().wait(1.4); }
+    banner(R.isV2(st) && rd === R.RULES.v2.rounds ? 'Final round' : 'Your turn', 'mine');
     nudges();
+  }
+
+  /* The Brawl: both sides work their structures at once, against the clock. */
+  async function brawlWindow(st) {
+    const secs = R.RULES.v2.brawlSecs;
+    const b = Game.brawl = { until: now() + secs * 1000, done: false, plan: MW.AI.brawl(st, 1, Game.diff), next: now() + 1800 + Math.random() * 1500 };
+    Game.busy = false;
+    banner('Brawl! Work your structures', 'mine');
+    render();
+    if (!st.sides[0].structs.some(t => R.canOperate(st, 0, t.uid))) tip('brawl-none', 'The <b>Brawl</b> is when structures fire. Build a Slingshot or Bellows on your turn to join in.');
+    else tip('brawl', 'Quick! Work your structures before the timer runs out. Press <b>End turn</b> when you\u2019re done.');
+    while (Game.st === st && !st.over) {
+      await new Promise(r => setTimeout(r, 100));
+      await whilePaused();
+      if (Game.st !== st || st.over) break;
+      const t = now();
+      if (b.plan.length && t >= b.next && !Game.busy) {
+        const a = b.plan.shift();
+        const ev = R.apply(st, 1, a);
+        if (ev) { Game.busy = true; render(); await playSafe(ev, st); Game.busy = false; render(); }
+        b.next = now() + 1500 + Math.random() * 2500;
+        continue;
+      }
+      const mineLeft = st.sides[0].structs.some(x => R.canOperate(st, 0, x.uid));
+      const idle = mode.k === 'idle' && !Game.busy;
+      if (idle && !b.plan.length && (b.done || !mineLeft || t >= b.until)) break;
+      if (t >= b.until + 6000) { if (mode.k === 'pump') await finishPump(); else if (mode.k !== 'idle') cancelMode(); }
+      render();
+    }
+    Game.brawl = null;
+    if (Game.st !== st || st.over) return;
+    Game.busy = true;
+    const ev = R.apply(st, 0, { type: 'endBrawl' });
+    if (ev) await playSafe(ev, st);
   }
 
   function finish() {
@@ -390,7 +433,7 @@
       modal({
         eye: won ? 'Victory' : 'Defeat',
         title: '<span class="bigtitle ' + (won ? 'win' : 'lose') + '">' + (won ? 'The meadow is yours' : 'The bramble wins') + '</span>',
-        body: (st.sides[1].hp <= 0 ? 'Their Keeper has fallen.' : st.sides[0].hp <= 0 ? 'Your Keeper has fallen.' : won ? 'Every enemy creature is down.' : 'Your squad has been cleared from the field.') + ' Battle lasted ' + Math.ceil(st.turn / 2) + ' rounds.' +
+        body: (st.sides[1].hp <= 0 ? 'Their Keeper has fallen.' : st.sides[0].hp <= 0 ? 'Your Keeper has fallen.' : R.isV2(st) && R.roundOf(st) >= R.RULES.v2.rounds && st.sides.every(x => x.field.length || x.reserve.length || x.deck.length) ? (won ? 'Time! Your Keeper stood taller.' : 'Time! Their Keeper stood taller.') : won ? 'Every enemy creature is down.' : 'Your squad has been cleared from the field.') + ' Battle lasted ' + Math.ceil(st.turn / 2) + ' rounds.' +
           '<div class="stats"><div><b>' + s.dmg + '</b><span>Damage dealt</span></div><div><b>' + (s.keeper || 0) + '</b><span>To their Keeper</span></div><div><b>' + s.kills + '</b><span>Defeated</span></div><div><b>' + s.spells + '</b><span>Spells cast</span></div><div><b>' + (s.shots ? s.hits + '/' + s.shots : '\u2014') + '</b><span>Slingshot hits</span></div></div>',
         buttons: [
           { label: 'Main menu', fn: () => show('title') },
@@ -427,14 +470,22 @@
   function render() {
     const st = Game.st; if (!st) return;
     const me = st.sides[0], op = st.sides[1];
+    const v2 = R.isV2(st);
     let dots = ''; for (let i = 0; i < op.squad.length; i++) dots += '<span class="dot ' + (i < op.reserve.length ? 'on' : '') + '"></span>';
+    if (v2) { dots = '<b>' + op.reserve.length + '</b> &middot; deck <b>' + op.deck.length + '</b>'; }
     $('#opp').innerHTML = '<span class="who">' + esc(op.name) + '</span><span class="mini">Keeper <b style="color:var(--accent)">' + op.hp + '</b>/' + op.maxHp + '</span><span class="mini">Points <b>' + op.pts + '</b></span><span class="mini">Field <b>' + op.field.length + '</b>/4</span><span class="mini">Reserve ' + dots + '</span><span class="mini">Spells <b>' + op.hand.length + '</b></span><span class="mini">Surge ' + meter(op.surge, R.RULES.surgeAt) + '</span>';
     const round = Math.ceil(st.turn / 2);
     const tb = $('#turnbadge');
-    tb.className = 'chip turnbadge ' + (st.over ? '' : st.active === 0 ? 'mine' : 'theirs');
-    tb.textContent = st.over ? 'Battle over' : 'Round ' + round + ' \u00b7 ' + (st.active === 0 ? 'Your move' : 'Opponent\u2019s move');
-    const nextPts = Math.min(R.RULES.ptsCap, me.pts + R.RULES.ptsPerTurn);
-    $('#me').innerHTML = '<span class="eyebrow">Your Keeper <b style="color:var(--ink)">' + me.hp + '</b>/' + me.maxHp + '</span><span class="eyebrow">Points</span><div class="pts" id="pts"><b>' + me.pts + '</b><span>/ ' + R.RULES.ptsCap + '</span></div><small>' + (me.freeDeploy ? '<span style="color:var(--you)">Next creature is free</span>' : (nextPts > me.pts ? '+2 next turn' : 'At the cap')) + '</small>' +
+    const brawl = st.phase === 'brawl' && !st.over;
+    const og = v2 && R.keeperMult(st) > 1;
+    tb.className = 'chip turnbadge ' + (st.over ? '' : brawl ? 'brawl' : st.active === 0 ? 'mine' : 'theirs') + (og ? ' overgrowth' : '');
+    tb.textContent = st.over ? 'Battle over' : 'Round ' + round + (v2 ? ' of ' + R.RULES.v2.rounds : '') + ' \u00b7 ' +
+      (brawl ? 'Brawl! ' + (Game.brawl ? Math.max(0, Math.ceil((Game.brawl.until - now()) / 1000)) + 's' : '') : st.active === 0 ? 'Your move' : 'Opponent\u2019s move') + (og ? ' \u00b7 Overgrowth' : '');
+    const cap = v2 ? R.RULES.v2.ptsCap : R.RULES.ptsCap;
+    const nextPts = v2 ? Math.min(cap, round + 2) : Math.min(R.RULES.ptsCap, me.pts + R.RULES.ptsPerTurn);
+    const ptsNote = me.freeDeploy ? '<span style="color:var(--you)">Next creature is free</span>' : v2 ? (me.pts > 0 && st.active === 0 ? 'Use them: they don\u2019t carry over' : nextPts + ' next round') : (nextPts > me.pts ? '+2 next turn' : 'At the cap');
+    $('#me').innerHTML = '<span class="eyebrow">Your Keeper <b style="color:var(--ink)">' + me.hp + '</b>/' + me.maxHp + '</span><span class="eyebrow">Points</span><div class="pts" id="pts"><b>' + me.pts + '</b><span>/ ' + cap + '</span></div><small>' + ptsNote + '</small>' +
+      (v2 ? '<small>Deck: ' + me.deck.length + ' left</small>' : '') +
       '<div id="surgebox"><span class="eyebrow">Surge</span> ' + meter(me.surge, R.RULES.surgeAt) + '</div>';
     const mine = st.active === 0 && !st.over;
     const handKey = JSON.stringify([me.reserve, me.hand, me.handFrom, me.field.map(u => u.uid), me.pts, me.freeDeploy, me.field.length, me.structs.length, mine, Game.busy, mode.k === 'armed' || mode.k === 'crushing' ? mode.hi : -1, mode.k === 'place' ? mode.id + mode.kind : '']);
@@ -444,7 +495,7 @@
         const cost = R.deployCost(st, 0, id);
         const can = mine && !Game.busy && R.canDeploy(st, 0, id);
         return creatureCardHTML(id, { cost, cls: (can ? '' : 'dim') + (mode.k === 'place' && mode.kind === 'creature' && mode.id === id ? ' sel' : '') });
-      }).join('') || '<div class="empty">Everyone is on the field.</div>';
+      }).join('') || '<div class="empty">' + (me.deck && me.deck.length ? 'You draw a creature each turn.' : 'Everyone is on the field.') + '</div>';
       const builds = Object.keys(R.STRUCTURES).map(sid => {
         const can = mine && !Game.busy && R.canBuild(st, 0, sid);
         return structCardHTML(sid, { cls: (can ? '' : 'dim') + (mode.k === 'place' && mode.kind === 'struct' && mode.id === sid ? ' sel' : '') });
@@ -466,8 +517,9 @@
         '<div class="group" id="g-spells"><span>Spells</span><div class="cards">' + spells + '</div></div>';
     }
     const eb = $('#endturn');
-    eb.disabled = !mine || Game.busy;
-    eb.classList.toggle('pulse', mine && !Game.busy && !R.hasMoves(st, 0));
+    eb.textContent = brawl ? 'Done' : 'End turn';
+    eb.disabled = brawl ? (!Game.brawl || Game.busy) : (!mine || Game.busy);
+    eb.classList.toggle('pulse', brawl ? !!Game.brawl && !me.structs.some(t => R.canOperate(st, 0, t.uid)) : mine && !Game.busy && !R.hasMoves(st, 0));
   }
 
   function nudges() {
@@ -500,13 +552,16 @@
       case 'build': log(who(e.side) + ' built a ' + R.STRUCTURES[e.sid].name); break;
       case 'shift': log('<b>' + esc(nameOf(e.uid)) + '</b> moved to lane ' + (e.lane + 1)); break;
       case 'push': log(esc(nameOf(e.uid)) + ' was blown into lane ' + (e.lane + 1)); break;
-      case 'keeper': if (lastAttacker) log('<b>' + esc(nameOf(lastAttacker)) + '</b> hit ' + (e.side === 1 ? 'their' : 'your') + ' Keeper for ' + e.amount); lastAttacker = null; break;
+      case 'keeper': if (e.overflow) log('Overflow: ' + e.amount + ' spilled into ' + (e.side === 1 ? 'their' : 'your') + ' Keeper'); else if (lastAttacker) log('<b>' + esc(nameOf(lastAttacker)) + '</b> hit ' + (e.side === 1 ? 'their' : 'your') + ' Keeper for ' + e.amount); lastAttacker = null; break;
       case 'shot': log(who(e.side) + ' fired the slingshot: ' + ({ direct: 'direct hit', graze: 'graze', miss: 'miss' }[e.result])); break;
       case 'pump': log(who(e.side) + ' pumped the bellows ' + e.pumps + (e.pumps === 1 ? ' time' : ' times')); break;
       case 'surgeReady': if (e.side === 0) { A.play('surgeReady'); toast('<b>Surge ready.</b> ' + esc(R.SPELLS[e.card].name) + ' is in your hand.'); } break;
       case 'draw': if (e.side === 0) A.play('draw'); break;
       case 'discard': if (e.side === 0) toast('Your hand is full, so ' + esc(R.SPELLS[e.card].name) + ' was discarded.'); break;
       case 'turn': Bus.emit('turnStart', { side: e.side }); break;
+      case 'drawCreature': if (e.side === 0) { A.play('draw'); log('<b>You</b> drew ' + esc(R.CREATURES[e.id].name)); } break;
+      case 'prime': log(who(e.side) + ' Primed ' + esc(nameOf(e.uid)) + ': ' + esc(e.name)); break;
+      case 'brawl': log('<b>Brawl!</b> Structures fire'); break;
     }
     render();
   }
@@ -544,13 +599,15 @@
   const laneUnder = g => (g ? R.laneAt(0, g.x, Math.max(R.RULES.halfMin + 0.01, Math.min(R.RULES.halfMax - 0.01, g.z))) : -1);
   const laneName = l => 'lane ' + (l + 1);
 
-  function myTurn() { const st = Game.st; return st && !st.over && st.active === 0 && !Game.busy && !Game.paused; }
+  function myTurn() { const st = Game.st; return st && !st.over && (st.active === 0 || (st.phase === 'brawl' && !!Game.brawl)) && !Game.busy && !Game.paused; }
+  const inBrawl = () => !!(Game.st && Game.st.phase === 'brawl');
 
   function onHandPointerDown(e) {
     const card = e.target.closest('.card');
     if (!card || !Game.st) return;
     A.init();
     if (!myTurn()) { A.play('deny'); return; }
+    if (inBrawl()) { A.play('deny'); toast('During the Brawl you can only work your structures.'); return; }
     if (mode.k === 'armed' || mode.k === 'pump' || mode.k === 'sling') return;
     const st = Game.st;
     if (card.dataset.id) {
@@ -600,7 +657,9 @@
     if (mode.k === 'place') return;
     if (mode.k === 'attack' && mode.sticky) return;
     if (!myTurn()) { pointer.orbit = true; return; }
-    const uid = Sc().pickUnit(e.clientX, e.clientY, allyFilter);
+    pointer.prime = null;
+    const uid = inBrawl() ? null : Sc().pickUnit(e.clientX, e.clientY, allyFilter);
+    if (uid && R.canPrime(st, 0, uid)) pointer.prime = { uid, t0: now() };
     if (uid) {
       const u = R.unitById(st, uid);
       if (u && R.canAct(st, u)) {
@@ -616,6 +675,7 @@
         A.play('select');
         return;
       }
+      if (u && pointer.prime) return;
       if (u) {
         A.play('deny');
         toast(u.sick ? R.CREATURES[u.id].name + ' just arrived and can attack next turn.' : u.jammed ? R.CREATURES[u.id].name + ' is jammed this turn.' : R.CREATURES[u.id].name + ' has already attacked this turn.');
@@ -630,7 +690,7 @@
         if (t.sid === 'slingshot') { mode = { k: 'sling', suid, land: null }; A.play('stretch'); return; }
         startPump(suid); mode.pressT = now(); return;
       }
-      if (t) { A.play('deny'); toast(t.used ? 'Already used this turn.' : 'Place a creature first so the bellows has someone to power.'); }
+      if (t) { A.play('deny'); toast(R.isV2(st) && !inBrawl() ? 'Structures are worked in the Brawl, right after your opponent\u2019s turn.' : t.used ? (inBrawl() ? 'Already used in this Brawl.' : 'Already used this turn.') : 'Place a creature first so the bellows has someone to power.'); }
     }
     pointer.orbit = true;
   }
@@ -693,6 +753,11 @@
     const wasDown = pointer.down;
     pointer.down = false;
     const st = Game.st;
+    const pr = pointer.prime; pointer.prime = null;
+    if (pr && st && mode.k === 'idle') {
+      const u = R.unitById(st, pr.uid);
+      if (u && !R.canAct(st, u)) { toast((u.sick ? R.CREATURES[u.id].name + ' just arrived and can attack next turn.' : R.CREATURES[u.id].name + ' can\u2019t attack right now.') + ' Hold it to <b>Prime</b>: ' + esc(R.PRIMES[u.id].name) + '.'); return; }
+    }
     if (e.button === 2 && !pointer.moved && mode.k !== 'idle' && mode.k !== 'armed') { pointer.orbit = false; cancelMode(); return; }
     if (pointer.orbit) { pointer.orbit = false; if (!(mode.k === 'place' && !pointer.moved)) return; }
     if (!st) return;
@@ -885,8 +950,13 @@
   }
 
   /* per-frame UI work */
+  const PRIME_MS = 650;
   function tick() {
     const t = now();
+    if (pointer.prime && pointer.down && !pointer.moved && (mode.k === 'idle' || (mode.k === 'attack' && mode.uid === pointer.prime.uid)) && t - pointer.prime.t0 > PRIME_MS) {
+      const uid = pointer.prime.uid; pointer.prime = null; pointer.down = false;
+      if (myTurn() && R.canPrime(Game.st, 0, uid) && permit('prime', { uid })) { setMode({ k: 'idle' }); act({ type: 'prime', uid }, { name: 'prime', data: { uid } }); }
+    }
     if (mode.k === 'crushing') {
       const p = Math.min(1, (t - mode.t0) / 450), el = cardEl(mode.hi);
       if (el) el.style.setProperty('--p', p.toFixed(3));
@@ -936,6 +1006,7 @@
       '<div class="line"><span class="famchip" style="--fam:' + fam.color + '">' + c.fam + '</span><span class="stat atk">' + R.attackPower(st, u) + ' <i>ATK</i></span><span class="stat hp">' + u.hp + '/' + u.maxHp + ' <i>HP</i></span><span style="font-weight:700;color:var(--ink-3);font-size:.78rem">' + ('Lane ' + (u.lane + 1)) + '</span></div>' +
       c.kw.map(k => '<p class="kw"><b>' + R.KEYWORDS[k].name + '.</b> ' + esc(R.KEYWORDS[k].text) + '</p>').join('') +
       (st8.length ? '<p class="warn">' + st8.join(' \u00b7 ') + '</p>' : '') +
+      (R.isV2(st) && R.PRIMES[u.id] ? '<p class="kw"><b>Prime: ' + esc(R.PRIMES[u.id].name) + '.</b> ' + esc(R.PRIMES[u.id].text) + (u.primed ? ' <i>(used)</i>' : u.side === 0 ? ' <i>Hold to use.</i>' : '') + '</p>' : '') +
       (u.side === 0 && st.active === 0 && R.canAct(st, u) ? '<p class="good">Ready. Drag onto an enemy to attack.</p>' : '');
   }
   function structTip(suid) {
@@ -943,7 +1014,8 @@
     const t = R.structById(st, suid); if (!t) return '';
     const s = R.STRUCTURES[t.sid];
     return '<h4>' + s.name + ' <span style="font-size:.8rem;color:' + (t.side ? 'var(--foe)' : 'var(--you)') + '">' + (t.side ? 'Enemy' : 'Yours') + '</span></h4><p>' + esc(s.text) + '</p>' +
-      (t.side === 0 ? (t.used ? '<p class="warn">Used this turn</p>' : '<p class="good">' + (t.sid === 'slingshot' ? 'Press on it and pull back away from your target.' : 'Click it, then press and release to pump.') + '</p>') : '');
+      (R.isV2(st) && !inBrawl() ? '<p>Works in the Brawl, after your opponent\u2019s turn.</p>' : '') +
+      (t.side === 0 && (inBrawl() || !R.isV2(st)) ? (t.used ? '<p class="warn">Used this turn</p>' : '<p class="good">' + (t.sid === 'slingshot' ? 'Press on it and pull back away from your target.' : 'Click it, then press and release to pump.') + '</p>') : '');
   }
   function overKeeper(e, g) {
     if (!mode.keeper) return false;
@@ -951,13 +1023,17 @@
     const u = R.unitById(Game.st, mode.uid);
     return !!(g && u && R.laneAt(1, g.x, g.z) === u.lane && !Game.st.sides[1].field.some(t => t.lane === u.lane));
   }
+  function structText(sid) {
+    if (!Game.st || !R.isV2(Game.st)) return R.STRUCTURES[sid].text;
+    return sid === 'slingshot' ? 'In each Brawl: pull back and let go. A direct hit deals 3, a graze 1.' : 'In each Brawl: pump up to 3 times. The nearest ally gets +1 attack per pump on your next turn.';
+  }
   function keeperAttackTip(uid) {
-    const st = Game.st, u = R.unitById(st, uid), d = R.keeperDamage(st, u), hp = st.sides[1].hp;
+    const st = Game.st, u = R.unitById(st, uid), d = R.keeperDamage(st, u) * R.keeperMult(st), hp = st.sides[1].hp;
     return '<h4>Their Keeper</h4><p><b style="font-size:1.1rem;color:var(--accent)">' + d + ' damage</b></p>' + (d >= hp ? '<p class="good">That wins the battle</p>' : '<p>Leaves it on ' + (hp - d) + ' of ' + st.sides[1].maxHp + '</p>');
   }
   function keeperTip(side) {
     const st = Game.st, s = st.sides[side];
-    return '<h4>' + (side ? 'Their' : 'Your') + ' Keeper</h4><p><b>' + s.hp + ' / ' + s.maxHp + '</b> health</p><p>Creatures with nothing across from them hit the enemy Keeper. Knock it to 0 to win.</p>';
+    return '<h4>' + (side ? 'Their' : 'Your') + ' Keeper</h4><p><b>' + s.hp + ' / ' + s.maxHp + '</b> health</p><p>Creatures with nothing across from them hit the enemy Keeper. Knock it to 0 to win.</p>' + (R.isV2(st) && R.keeperMult(st) > 1 ? '<p class="warn">Overgrowth: Keeper hits count double</p>' : '');
   }
   function attackTip(uid, tuid) {
     const st = Game.st, a = R.unitById(st, uid), t = R.unitById(st, tuid);
@@ -965,7 +1041,7 @@
     if (!mode.legal.includes(tuid)) return '<h4>' + esc(R.CREATURES[t.id].name) + '</h4><p class="warn">Out of reach from ' + laneName(a.lane) + '</p>';
     const p = R.previewDamage(st, a, t);
     return '<h4>' + esc(R.CREATURES[t.id].name) + '</h4><p><b style="font-size:1.1rem;color:var(--accent)">' + p.dmg + ' damage</b>' + (p.adv ? ' <span class="good">Strong!</span>' : '') + (p.absorbed ? ' (' + p.absorbed + ' blocked)' : '') + '</p>' +
-      (p.kills ? '<p class="good">Defeats it</p>' : '<p>Leaves it on ' + (t.hp - p.dmg) + ' HP</p>') + (t.spiky ? '<p class="warn">Thorns: 1 back to you</p>' : '');
+      (p.kills ? '<p class="good">Defeats it' + (R.isV2(st) && p.dmg > t.hp ? ', and ' + ((p.dmg - t.hp) * R.keeperMult(st)) + ' spills into their Keeper' : '') + '</p>' : '<p>Leaves it on ' + (t.hp - p.dmg) + ' HP</p>') + (t.spiky ? '<p class="warn">Thorns: 1 back to you</p>' : '');
   }
   function placeTip(l, ok) {
     if (l < 0) return '<p class="warn">Pick one of the five lanes on your side of the brook</p>';
@@ -987,7 +1063,7 @@
       const c = R.CREATURES[card.dataset.id];
       return '<h4>' + esc(c.name) + '</h4><p>' + esc(c.blurb) + '</p>' + c.kw.map(k => '<p class="kw"><b>' + R.KEYWORDS[k].name + '.</b> ' + esc(R.KEYWORDS[k].text) + '</p>').join('') + '<p>Spells: ' + c.spells.map(s => R.SPELLS[s].name).join(', ') + '</p>';
     }
-    if (card.dataset.sid) { const s = R.STRUCTURES[card.dataset.sid]; return '<h4>' + s.name + '</h4><p>' + esc(s.text) + '</p>'; }
+    if (card.dataset.sid) { const s = R.STRUCTURES[card.dataset.sid]; return '<h4>' + s.name + '</h4><p>' + esc(structText(card.dataset.sid)) + '</p>'; }
     if (card.dataset.card) { const sp = R.SPELLS[card.dataset.card]; return '<h4>' + esc(sp.name) + '</h4><p>' + esc(sp.text) + '</p><p class="kw"><b>Hold to crush,</b> then ' + R.VERBS[sp.verb].how.toLowerCase() + '</p>'; }
     return '';
   }
@@ -1002,7 +1078,7 @@
     ['#sq-back', '#be-back', '#ht-back', '#se-back'].forEach(s => $(s).addEventListener('click', back));
     $('#ht-tutorial').addEventListener('click', () => { A.play('click'); if (Game.st && overlayReturn === 'match') { setPaused(false); endMatch(); } MW.Tutorial.start(); });
     $('#sq-quick').addEventListener('click', quickPick);
-    $('#sq-start').addEventListener('click', () => { if (chosen.length !== 5) return; A.play('click'); progress.squad = chosen.slice(); saveProgress(); startMatch({ squad: chosen.slice(), diff: progress.diff }); });
+    $('#sq-start').addEventListener('click', () => { if (chosen.length !== SQ()) return; A.play('click'); progress.squad = chosen.slice(); saveProgress(); startMatch({ squad: chosen.slice(), diff: progress.diff }); });
     $('#pool').addEventListener('click', e => {
       const c = e.target.closest('.card'); if (!c) return;
       const id = c.dataset.id, i = chosen.indexOf(id);
