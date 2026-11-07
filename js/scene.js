@@ -7,6 +7,15 @@
   const Rules = () => MW.Rules;
 
   let renderer, scene, camera, canvas, sun, hemi, skyMat;
+  /* `stage` is the real three.js Scene. `scene` is the board group everything is built into, so XR can
+     shrink the whole meadow onto a real table by moving and scaling one group. `pickCam` is a fixed copy
+     of the desktop camera used for picking and screen math, which XR never moves. */
+  let stage, pickCam;
+  const xr = { on: false, mode: null, ray: null, envVisible: true };
+  const env = [];
+  /* scenery outside the board lives in its own group: in VR it stays life-size around you while the board shrinks onto a table */
+  let envGroup;
+  const envAdd = o => { env.push(o); envGroup.add(o); return o; };
   const opts = { shake: true, reduce: false };
   const cam = { yaw: 0, pitch: 0.74, dist: 21, target: new T.Vector3(0, 0, 1.2), shake: 0, auto: false };
   const DEFAULT_CAM = { yaw: 0, pitch: 0.74, dist: 21 };
@@ -57,8 +66,8 @@
     }
     skyGeo.setAttribute('color', new T.Float32BufferAttribute(cols, 3));
     skyMat = new T.MeshBasicMaterial({ vertexColors: true, side: T.BackSide, fog: false });
-    scene.add(new T.Mesh(skyGeo, skyMat));
-    scene.fog = new T.Fog(0xcfe6d6, 45, 120);
+    envAdd(new T.Mesh(skyGeo, skyMat));
+    stage.fog = new T.Fog(0xcfe6d6, 45, 120);
 
     hemi = new T.HemisphereLight(0xe8f4ff, 0x5a7a2a, 0.9); scene.add(hemi);
     sun = new T.DirectionalLight(0xfff0c8, 1.25);
@@ -66,7 +75,7 @@
     sun.shadow.mapSize.set(2048, 2048);
     const sc = sun.shadow.camera; sc.left = sc.bottom = -16; sc.right = sc.top = 16; sc.near = 1; sc.far = 70;
     sun.shadow.bias = -0.0006;
-    scene.add(sun);
+    scene.add(sun); scene.add(sun.target);
 
     const grassTex = canvasTex(512, 512, (g, w, h) => {
       g.fillStyle = '#6aa83c'; g.fillRect(0, 0, w, h);
@@ -75,7 +84,7 @@
     });
     grassTex.wrapS = grassTex.wrapT = T.RepeatWrapping; grassTex.repeat.set(30, 30);
     const ground = mesh(new T.PlaneGeometry(260, 260), new T.MeshStandardMaterial({ map: grassTex, roughness: 1 }));
-    ground.rotation.x = -Math.PI / 2; ground.castShadow = false; scene.add(ground);
+    ground.rotation.x = -Math.PI / 2; ground.castShadow = false; envAdd(ground);
 
     /* the mown battle field, with faint stripes */
     const fieldTex = canvasTex(1024, 1024, (g, w, h) => {
@@ -97,7 +106,7 @@
     });
     waterTex.wrapS = waterTex.wrapT = T.RepeatWrapping; waterTex.repeat.set(12, 1);
     const water = mesh(new T.PlaneGeometry(70, 1.4), new T.MeshStandardMaterial({ map: waterTex, roughness: 0.15, metalness: 0.1, transparent: true, opacity: 0.92 }));
-    water.rotation.x = -Math.PI / 2; water.position.y = 0.03; water.castShadow = false; scene.add(water);
+    water.rotation.x = -Math.PI / 2; water.position.y = 0.03; water.castShadow = false; scene.add(water); decor.waterMesh = water;
     decor.water = waterTex;
     const stoneGeo = new T.DodecahedronGeometry(1, 0), stoneMat = M(0x9d9a8c, { flatShading: true });
     const stones = new T.InstancedMesh(stoneGeo, stoneMat, 90);
@@ -108,7 +117,7 @@
       dummy.scale.set(rnd(0.12, 0.3), rnd(0.06, 0.14), rnd(0.12, 0.25)); dummy.rotation.set(rnd(0, 3), rnd(0, 3), 0);
       dummy.updateMatrix(); stones.setMatrixAt(i, dummy.matrix);
     }
-    stones.castShadow = true; scene.add(stones);
+    stones.castShadow = true; envAdd(stones);
     [0, 1, 2, 3, 4].map(l => Rules().laneX(l)).forEach(x => { const st = mesh(new T.DodecahedronGeometry(0.42, 0), M(0x8c8c84, { flatShading: true }), x, 0.08, rnd(-0.2, 0.2)); st.scale.y = 0.35; scene.add(st); });
 
     /* five lanes: worn dirt paths, a soft pad at each creature slot, a stump at each structure slot */
@@ -118,7 +127,7 @@
       for (let i = 0; i < 2200; i++) { g.fillStyle = ['#b48a5a', '#a07a4c', '#c49c6a'][i % 3]; g.globalAlpha = rnd(0.25, 0.6); const x = w / 2 + (Math.random() + Math.random() - 1) * w * 0.42; g.fillRect(x, Math.random() * h, 3, 3); }
     });
     const flowerGeo = new T.SphereGeometry(0.07, 6, 5);
-    const borderFl = [0xffffff, 0xfac775, 0xf4c0d1].map(c => new T.InstancedMesh(flowerGeo, new T.MeshStandardMaterial({ color: c, roughness: 0.6 }), 90));
+    const borderFl = [0xffffff, 0xfac775, 0xf4c0d1].map(c => new T.InstancedMesh(flowerGeo, new T.MeshStandardMaterial({ color: c, roughness: 0.6 }), 160));
     const flCount = [0, 0, 0];
     for (let l = 0; l < RR.lanes; l++) {
       const x = LX(l);
@@ -137,7 +146,7 @@
           const k = i % 3, z = -7.6 + (i / 90) * 15.2;
           if (Math.abs(z) < 0.9) continue;
           dummy.position.set(bx + rnd(-0.12, 0.12), 0.12, z + rnd(-0.1, 0.1)); dummy.scale.setScalar(rnd(0.7, 1.2)); dummy.rotation.set(0, 0, 0); dummy.updateMatrix();
-          borderFl[k].setMatrixAt(flCount[k]++, dummy.matrix);
+          if (flCount[k] < 160) borderFl[k].setMatrixAt(flCount[k]++, dummy.matrix);
         }
       }
     }
@@ -154,18 +163,18 @@
       dummy.position.set(x, 0.2, z); dummy.rotation.set(rnd(-0.2, 0.2), rnd(0, 6), rnd(-0.2, 0.2));
       dummy.scale.setScalar(inField ? rnd(0.3, 0.6) : rnd(0.7, 1.8)); dummy.updateMatrix(); tufts.setMatrixAt(n++, dummy.matrix);
     }
-    scene.add(tufts);
+    envAdd(tufts);
     [0xffffff, 0xfac775, 0xf4c0d1, 0xafa9ec].forEach(c => {
       const fl = new T.InstancedMesh(new T.SphereGeometry(0.13, 6, 5), new T.MeshStandardMaterial({ color: c, roughness: 0.6 }), 160);
       let k = 0;
       while (k < 160) { const x = rnd(-45, 45), z = rnd(-40, 30); if (Math.abs(x) < 11 && Math.abs(z) < 9) continue; dummy.position.set(x, rnd(0.3, 0.6), z); dummy.scale.setScalar(rnd(0.7, 1.4)); dummy.updateMatrix(); fl.setMatrixAt(k++, dummy.matrix); }
-      scene.add(fl);
+      envAdd(fl);
     });
 
     /* hills */
     const hillGeo = new T.SphereGeometry(1, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2);
     [[-30, -32, 16, 0x5f9a3a], [0, -42, 22, 0x558f33], [32, -30, 16, 0x5f9a3a], [-46, -6, 12, 0x6aa544], [46, -4, 12, 0x6aa544], [-40, 26, 14, 0x6aa544], [40, 28, 14, 0x5f9a3a]].forEach(([x, z, r, c]) => {
-      const h = mesh(hillGeo, M(c), x, -0.1, z); h.scale.set(r * 1.6, r * 0.42, r); h.castShadow = false; scene.add(h);
+      const h = mesh(hillGeo, M(c), x, -0.1, z); h.scale.set(r * 1.6, r * 0.42, r); h.castShadow = false; envAdd(h);
     });
 
     /* trees, including the two old oaks at either end */
@@ -182,19 +191,20 @@
         g.add(mesh(new T.CircleGeometry(0.12, 10), M(0x3a2a10), 1.35 * s, 2.7 * s, 0.7 * s + 0.6));
       }
       g.position.set(x, 0, z); g.rotation.y = rnd(0, 6);
-      scene.add(g);
+      envAdd(g);
       decor.trees.push({ crown, ph: rnd(0, 6) });
       return g;
     };
     [[-16, -13, 1.2], [16, -13, 1.25], [-21, -2, 1], [21, -1, 1.05], [-14, -19, 0.95], [14, -19, 0.9], [-21, 10, 0.95], [21, 11, 1], [-28, -16, 1.3], [28, -18, 1.2], [0, -26, 1.5], [-9, -24, 1.1], [9, -24, 1.0], [-26, 18, 1.1], [26, 20, 1.2]].forEach(a => treeAt(...a));
     buildKeepers();
+    buildTableBase();
 
     /* bushes and rocks around the edge */
     for (let i = 0; i < 26; i++) {
       const a = rnd(0, Math.PI * 2), r = rnd(13, 20);
       const x = Math.cos(a) * r * 1.2, z = Math.sin(a) * r * 0.85;
-      if (Math.random() < 0.6) { const b = mesh(new T.IcosahedronGeometry(rnd(0.6, 1.1), 1), M(0x4a9a34, { flatShading: true }), x, 0.3, z); b.scale.y = 0.7; scene.add(b); }
-      else { const r2 = mesh(new T.DodecahedronGeometry(rnd(0.4, 0.9), 0), M(0x9d9a8c, { flatShading: true }), x, 0.2, z); r2.scale.y = 0.6; scene.add(r2); }
+      if (Math.random() < 0.6) { const b = mesh(new T.IcosahedronGeometry(rnd(0.6, 1.1), 1), M(0x4a9a34, { flatShading: true }), x, 0.3, z); b.scale.y = 0.7; envAdd(b); }
+      else { const r2 = mesh(new T.DodecahedronGeometry(rnd(0.4, 0.9), 0), M(0x9d9a8c, { flatShading: true }), x, 0.2, z); r2.scale.y = 0.6; envAdd(r2); }
     }
 
     /* clouds */
@@ -202,7 +212,7 @@
       const g = new T.Group();
       for (let k = 0; k < 5; k++) g.add(new T.Mesh(new T.SphereGeometry(rnd(2, 3.6), 10, 8), new T.MeshLambertMaterial({ color: 0xffffff, emissive: 0xbbbbbb })).translateX(k * 2.6 - 5).translateY(rnd(-0.6, 0.8)));
       g.position.set(rnd(-90, 90), rnd(30, 42), rnd(-90, -30)); g.scale.y = 0.55;
-      scene.add(g); decor.clouds.push(g);
+      envAdd(g); decor.clouds.push(g);
     }
 
     /* butterflies */
@@ -216,6 +226,21 @@
       scene.add(g);
       decor.butterflies.push({ g, pl, pr, ph: rnd(0, 6), cx: rnd(-14, 14), cz: rnd(-10, 10), r: rnd(2, 5), sp: rnd(0.15, 0.3) });
     }
+  }
+
+  /* A wooden game board under the meadow, only shown in mixed reality so the field reads as a toy on the table. */
+  function buildTableBase() {
+    const wood = M(0x8a5a32, { flatShading: true }), rim = M(0x6b4325, { flatShading: true });
+    const g = new T.Group();
+    const slab = mesh(new T.BoxGeometry(27, 0.7, 25.5), wood, 0, -0.36, 0); slab.castShadow = false; g.add(slab);
+    [[0, 12.75, 27.6, 1.0], [0, -12.75, 27.6, 1.0]].forEach(([x, z, w, d]) => g.add(mesh(new T.BoxGeometry(w, 0.9, d), rim, x, -0.2, z)));
+    [[13.5, 0], [-13.5, 0]].forEach(([x, z]) => g.add(mesh(new T.BoxGeometry(1.0, 0.9, 26.5), rim, x, -0.2, z)));
+    const mat = mesh(new T.PlaneGeometry(27, 25.5), M(0x7dbb4b), 0, 0.004, 0); mat.rotation.x = -Math.PI / 2; mat.castShadow = false; g.add(mat);
+    /* legs down to the floor, for VR where there is no real table; sized when the board is placed */
+    const legs = new T.Group();
+    [[-11.5, -10.5], [11.5, -10.5], [-11.5, 10.5], [11.5, 10.5]].forEach(([x, z]) => { const l = mesh(new T.CylinderGeometry(0.7, 0.55, 1, 8), rim, x, 0, z); l.castShadow = false; legs.add(l); });
+    g.add(legs); decor.tableLegs = legs;
+    g.visible = false; scene.add(g); decor.tableBase = g;
   }
 
   /* ---------- zones, marker, rings, lines ---------- */
@@ -506,7 +531,7 @@
       const tex = new T.CanvasTexture(c);
       const sprite = new T.Sprite(new T.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
       sprite.scale.set(3.4, 0.9, 1); sprite.position.set(0, 5.1, sg * 9.7); sprite.renderOrder = 15; sprite.visible = false; scene.add(sprite);
-      keepers[side] = { side, g, hive, ring, sprite, ctx: c.getContext('2d'), tex, hp: 25, maxHp: 25, pos: new T.Vector3(0, 3.0, sg * 9.7), ground: new T.Vector3(0, 0, sg * 9.4) };
+      keepers[side] = { side, g, crown, hive, ring, sprite, ctx: c.getContext('2d'), tex, hp: 25, maxHp: 25, pos: new T.Vector3(0, 3.0, sg * 9.7), ground: new T.Vector3(0, 0, sg * 9.4) };
       drawKeeper(keepers[side]);
     });
   }
@@ -547,7 +572,7 @@
     const k = keepers[side]; if (!k) return false;
     setRay(cx, cy);
     if (ray.intersectObject(k.hive, true).length) return true;
-    const g = ray.ray.intersectPlane(groundPlane, tmpV);
+    const g = groundHit(tmpV);
     return !!g && Math.hypot(g.x - k.ground.x, g.z - k.ground.z) < 2.8;
   }
   function syncAll(st) {
@@ -644,12 +669,21 @@
 
   /* ---------- picking ---------- */
   const ray = new T.Raycaster(), ndc = new T.Vector2(), groundPlane = new T.Plane(new T.Vector3(0, 1, 0), 0), tmpV = new T.Vector3();
+  const invM = new T.Matrix4(), localRay = new T.Ray();
   function setRay(cx, cy) {
+    if (xr.on && xr.ray) { ray.ray.copy(xr.ray); return; }
     const r = canvas.getBoundingClientRect();
     ndc.set(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);
-    ray.setFromCamera(ndc, camera);
+    ray.setFromCamera(ndc, pickCam);
   }
-  function pickGround(cx, cy) { setRay(cx, cy); return ray.ray.intersectPlane(groundPlane, tmpV) ? { x: tmpV.x, z: tmpV.z } : null; }
+  /* The current pick ray against the board's ground, in board coordinates. */
+  function groundHit(out) {
+    scene.updateMatrixWorld();
+    invM.copy(scene.matrixWorld).invert();
+    localRay.copy(ray.ray).applyMatrix4(invM);
+    return localRay.intersectPlane(groundPlane, out);
+  }
+  function pickGround(cx, cy) { setRay(cx, cy); return groundHit(tmpV) ? { x: tmpV.x, z: tmpV.z } : null; }
   function pickUnit(cx, cy, filter) {
     setRay(cx, cy);
     const list = [];
@@ -657,7 +691,7 @@
     const hit = ray.intersectObjects(list, true)[0];
     if (hit) return hit.object.userData.uid;
     /* forgiving fallback: nearest unit to the ground point */
-    const g = ray.ray.intersectPlane(groundPlane, tmpV);
+    const g = groundHit(tmpV);
     if (!g) return null;
     let best = null, bd = 1.1;
     views.forEach(v => { if (v.dying || (filter && !filter(v))) return; const d = Math.hypot(v.root.position.x - g.x, v.root.position.z - g.z); if (d < bd) { bd = d; best = v.uid; } });
@@ -669,14 +703,14 @@
     structs.forEach(s => { if (!filter || filter(s)) list.push(s.root); });
     const hit = ray.intersectObjects(list, true)[0];
     if (hit) return hit.object.userData.suid;
-    const g = ray.ray.intersectPlane(groundPlane, tmpV);
+    const g = groundHit(tmpV);
     if (!g) return null;
     let best = null, bd = 1.0;
     structs.forEach(s => { if (filter && !filter(s)) return; const d = Math.hypot(s.base.x - g.x, s.base.z - g.z); if (d < bd) { bd = d; best = s.uid; } });
     return best;
   }
   function worldToScreen(x, y, z) {
-    const v = new T.Vector3(x, y, z).project(camera), r = canvas.getBoundingClientRect();
+    const v = new T.Vector3(x, y, z).project(pickCam), r = canvas.getBoundingClientRect();
     return { x: r.left + (v.x + 1) / 2 * r.width, y: r.top + (1 - v.y) / 2 * r.height, behind: v.z > 1 };
   }
   function unitScreen(uid, above) {
@@ -1571,7 +1605,7 @@
 
   /* ---------- main loop ---------- */
   let last = performance.now();
-  function frame(now) {
+  function frame(now, xrFrame) {
     const dt = Math.min(0.05, (now - last) / 1000); last = now;
     const t = now / 1000;
     runAnims(now);
@@ -1579,7 +1613,16 @@
     const sh = cam.shake; cam.shake = Math.max(0, cam.shake - dt * 1.6);
     const cp = cam.target.clone().add(new T.Vector3(Math.sin(cam.yaw) * Math.cos(cam.pitch) * cam.dist, Math.sin(cam.pitch) * cam.dist, Math.cos(cam.yaw) * Math.cos(cam.pitch) * cam.dist));
     if (sh > 0) cp.add(new T.Vector3(rnd(-1, 1) * sh, rnd(-1, 1) * sh, rnd(-1, 1) * sh));
-    camera.position.copy(cp); camera.lookAt(cam.target);
+    if (xr.on) {
+      const d = DEFAULT_CAM;
+      pickCam.position.copy(cam.target).add(new T.Vector3(Math.sin(d.yaw) * Math.cos(d.pitch) * d.dist, Math.sin(d.pitch) * d.dist, Math.cos(d.yaw) * Math.cos(d.pitch) * d.dist));
+      pickCam.lookAt(cam.target);
+    } else {
+      camera.position.copy(cp); camera.lookAt(cam.target);
+      pickCam.position.copy(cp); pickCam.quaternion.copy(camera.quaternion);
+    }
+    pickCam.updateMatrixWorld();
+    if (xr.onFrame) xr.onFrame(now, xrFrame, dt);
     views.forEach(v => idle(v, t, dt));
     structs.forEach(s => {
       const dim = s.used ? 0.0 : 0;
@@ -1604,32 +1647,85 @@
     }
     ringPool.forEach(r => { if (r.visible) { const v = views.get(r.userData.uid); if (v) r.position.set(v.root.position.x, 0.06, v.root.position.z); r.material.opacity = 0.6 + Math.sin(t * 6) * 0.3; } });
     ['units', 'structs'].forEach(k => slotGlow[k].forEach(arr => arr.forEach(g => { if (g.visible) g.material.opacity = 0.32 + Math.sin(t * 5) * 0.14; })));
-    renderer.render(scene, camera);
-    requestAnimationFrame(frame);
+    renderer.render(stage, camera);
   }
 
   function resize() {
     const w = canvas.clientWidth, h = canvas.clientHeight;
     if (!w || !h) return;
-    renderer.setSize(w, h, false);
+    if (!xr.on) renderer.setSize(w, h, false);
     camera.aspect = w / h; camera.updateProjectionMatrix();
+    pickCam.aspect = w / h; pickCam.updateProjectionMatrix();
   }
 
   function init(canvasEl) {
     canvas = canvasEl;
-    renderer = new T.WebGLRenderer({ canvas, antialias: true });
+    renderer = new T.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    renderer.setClearColor(0x6fae3f, 1);
+    renderer.xr.enabled = true;
     renderer.setPixelRatio(Math.min(2, root.devicePixelRatio || 1));
     renderer.shadowMap.enabled = true; renderer.shadowMap.type = T.PCFSoftShadowMap;
-    scene = new T.Scene();
+    stage = new T.Scene();
+    scene = new T.Group(); scene.name = 'board'; stage.add(scene);
+    envGroup = new T.Group(); envGroup.name = 'scenery'; stage.add(envGroup);
     camera = new T.PerspectiveCamera(42, 1, 0.1, 400);
+    pickCam = new T.PerspectiveCamera(42, 1, 0.1, 400);
     buildWorld(); buildZones(); buildMarker(); buildParticles();
     if (root.ResizeObserver) new ResizeObserver(resize).observe(canvas); else root.addEventListener('resize', resize);
     resize();
-    requestAnimationFrame(frame);
+    renderer.setAnimationLoop(frame);
   }
 
+  /* ---------- XR hooks: the XR module places the board and feeds a pointer ray ---------- */
+  const baseShadow = { left: -16, right: 16, top: 16, bottom: -16, near: 1, far: 70 };
+  function setXR(o) {
+    if (!o) {
+      xr.on = false; xr.ray = null; xr.mode = null; xr.onFrame = null;
+      scene.position.set(0, 0, 0); scene.rotation.set(0, 0, 0); scene.scale.setScalar(1);
+      envGroup.position.set(0, 0, 0); envGroup.rotation.set(0, 0, 0);
+      setEnv(true); decor.tableBase.visible = false; decor.waterMesh.scale.x = 1; fadeCrown(keepers[0], false);
+      stage.fog = new T.Fog(0xcfe6d6, 45, 120);
+      renderer.setClearColor(0x6fae3f, 1);
+      camera.near = 0.1; camera.updateProjectionMatrix();
+      Object.assign(sun.shadow.camera, baseShadow); sun.shadow.camera.updateProjectionMatrix();
+      resize();
+      return;
+    }
+    xr.on = true; xr.mode = o.mode; xr.onFrame = o.onFrame || null;
+    /* your own oak stands between you and the lanes when you look down at a table, so see through its crown */
+    fadeCrown(keepers[0], true);
+    const ar = o.mode === 'ar';
+    setEnv(!ar); decor.tableBase.visible = true; decor.tableLegs.visible = !ar;
+    decor.waterMesh.scale.x = 26 / 70;
+    stage.fog = ar ? null : new T.Fog(0xcfe6d6, 45, 120);
+    renderer.setClearColor(0x000000, ar ? 0 : 1);
+    camera.near = 0.02; camera.updateProjectionMatrix();
+  }
+  function fadeCrown(k, on) {
+    if (!k) return;
+    k.crown.traverse(m => { if (m.isMesh) { m.material.transparent = on; m.material.opacity = on ? 0.28 : 1; m.material.depthWrite = !on; m.castShadow = !on; } });
+  }
+  function setEnv(on) { xr.envVisible = on; env.forEach(o => { o.visible = on; }); }
+  /* Place the board: position in metres, yaw so the player's side faces them, scale in metres per unit. */
+  function placeBoard(pos, yaw, scale) {
+    scene.position.copy(pos); scene.rotation.set(0, yaw, 0); scene.scale.setScalar(scale);
+    /* life-size meadow around you, centred under the board */
+    envGroup.position.set(pos.x, 0, pos.z); envGroup.rotation.set(0, yaw, 0);
+    const h = pos.y / scale; decor.tableLegs.children.forEach(l => { l.scale.y = Math.max(0.01, h - 0.7); l.position.y = -0.7 - (h - 0.7) / 2; });
+    scene.updateMatrixWorld(true);
+    /* shadows: the shadow camera works in world units, so shrink its box with the board */
+    const sc = sun.shadow.camera;
+    sc.left = baseShadow.left * scale; sc.right = baseShadow.right * scale; sc.top = baseShadow.top * scale; sc.bottom = baseShadow.bottom * scale;
+    sc.near = baseShadow.near * scale; sc.far = baseShadow.far * scale; sc.updateProjectionMatrix();
+  }
+  function setXRRay(r) { xr.ray = r; }
+  /* For XR: which board-space ground point the ray hits, plus the creatures it touches. */
+  function rayGround(r) { ray.ray.copy(r); return groundHit(new T.Vector3()); }
+  function boardToScreen(x, y, z) { return worldToScreen(x, y, z); }
+
   MW.Scene = {
-    init, setOptions(o) { Object.assign(opts, o); }, play, syncAll, clearMatch, intro, titleMode, showcase, clearShowcase,
+    init, setOptions(o) { Object.assign(opts, o); },
+    setXR, placeBoard, setXRRay, rayGround, boardToScreen, get renderer() { return renderer; }, get stage() { return stage; }, get board() { return scene; }, get camera() { return camera; }, get xrOn() { return xr.on; }, play, syncAll, clearMatch, intro, titleMode, showcase, clearShowcase,
     pickUnit, pickStruct, pickGround, worldToScreen, unitScreen, ghostShow, ghostMove, ghostHide, dragLine, targetRings,
     zones, marker, slingPreview, slingClear, bellowsPress, puffFrom: (suid, tuid) => puffFrom(structs.get(suid), views.get(tuid)),
     setHover, setSelected, orbit, zoom, resetCamera, onEvent, setCastOrigin, portraits, previewer, floatText, wait, tween, hideHp,
