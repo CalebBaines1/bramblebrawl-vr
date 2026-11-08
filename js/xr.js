@@ -1,4 +1,4 @@
-/* Bramblebrawl XR: plays the same game on a real table (mixed reality) or in the meadow (VR) on Meta Quest.
+/* Hivebound XR: plays the same game on a real table (mixed reality) or in the meadow (VR) on Meta Quest.
    Nothing here knows the rules. It shrinks the board onto the table, mirrors the HTML HUD and menus onto
    floating panels, and turns controller or hand pointers into the same pointer events a mouse sends, so
    every desktop interaction (place, drag to attack, crush, aim, swipe, hold, slingshot) works unchanged. */

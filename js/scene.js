@@ -1,4 +1,4 @@
-/* Bramblebrawl scene: the meadow, camera, creature views, effects, and the event player that turns
+/* Hivebound scene: the meadow, camera, creature views, effects, and the event player that turns
    rules events into animation. Nothing here changes game state; it only shows it. */
 (function (root) {
   'use strict';
@@ -859,7 +859,7 @@
         v.shield = e.shield; hpCanvasDraw(v); v.extras.shield.visible = true;
         MW.Audio.play('shield');
         await tween(0.4, k => { v.extras.shield.scale.setScalar((v.rig.height * 0.62 + 0.3) * E.outBack(k)); });
-        floatText('Shield ' + e.shield, v.root.position.x, v.rig.height + 0.8, v.root.position.z, { color: '#9fd4f8', size: 48 });
+        floatText(e.shell ? 'Shell up' : 'Shield ' + e.shield, v.root.position.x, v.rig.height + 0.8, v.root.position.z, { color: '#9fd4f8', size: 48 });
         break;
       }
       case 'buff': {
@@ -889,6 +889,23 @@
         emit({ x: e.x, y: 0.1, z: e.z, n: 16, color: [0x8a6540, 0xd9c7a0], speed: 3, up: true, life: 0.6, size: 0.12, spread: 0.5 });
         await tween(0.5, k => { sv.root.scale.setScalar(Math.max(0.01, k)); }, E.outBack);
         break;
+      }
+      case 'prime': {
+        if (!v) break;
+        MW.Audio.play('bloom');
+        const px = v.root.position.x, pz = v.root.position.z;
+        ringWave(px, pz, 0xfac775, 3, 0.55); ringWave(px, pz, 0xffffff, 2, 0.4);
+        emit({ x: px, y: 0.3, z: pz, n: 26, color: [0xfac775, 0xffffff, 0xef9f27], speed: 3, up: true, gravity: 1.5, life: 0.9, size: 0.1, spread: 0.6 });
+        floatText(e.name + '!', px, v.rig.height + 1.3, pz, { color: '#fac775', size: 56, dur: 1.3, rise: 0.7 });
+        v.anim++;
+        await tween(0.35, k => { v.root.scale.setScalar(1 + Math.sin(k * Math.PI) * 0.25); });
+        v.anim--;
+        break;
+      }
+      case 'brawl': {
+        MW.Audio.play('horn');
+        for (let side = 0; side < 2; side++) if (keepers[side]) ringWave(0, keepers[side].pos.z * 0.45, 0xe24b4a, 6, 0.6);
+        await wait(0.3); break;
       }
       case 'pump': await doPump(e); break;
       case 'keeper': await keeperHit(e); break;

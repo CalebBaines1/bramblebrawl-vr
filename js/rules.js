@@ -1,4 +1,4 @@
-/* Bramblebrawl rules engine. Pure logic: no DOM, no rendering.
+/* Hivebound rules engine. Pure logic: no DOM, no rendering.
    The PC build and a future VR build both drive this same module. */
 (function (root) {
   'use strict';
@@ -71,11 +71,40 @@
     bellows:   { name: 'Bellows',   cost: 2, text: 'Once a turn: pump up to 3 times. The nearest ally gets +1 attack per pump this turn.' }
   };
 
+  /* Prime: once per match, hold on one of your creatures to fire its own trick. */
+  const PRIMES = {
+    mossback:         { name: 'Shell up',      text: 'Pulls into its shell: takes no damage until your next turn.' },
+    clover_hare:      { name: 'Bound',         text: 'Hops to the best open lane and is ready to attack again.' },
+    dandelion_sprite: { name: 'Scatter seeds', text: 'Draws two of its spells.' },
+    puffwick:         { name: 'Drift',         text: 'Floats to the best open lane and is ready to attack again.' },
+    lily_newt:        { name: 'Spring',        text: 'Heals every ally 3.' },
+    bog_toad:         { name: 'Glob',          text: 'The enemy across loses 2 attack for good.' },
+    emberling:        { name: 'Flare',         text: '2 damage to the enemies across and in both lanes beside it.' },
+    cinder_moth:      { name: 'Ember dust',    text: 'Every enemy starts burning.' },
+    bramble_ox:       { name: 'Lower horns',   text: 'Its Charge comes back and it is ready to attack again.' },
+    pebble_golem:     { name: 'Rockfall',      text: '3 damage to the enemy across, and Shield 2 for itself.' },
+    clanker:          { name: 'Wind up',       text: 'Stomps again (1 to every enemy) and gains +1 attack for good.' },
+    hollow_stag:      { name: 'Ancient call',  text: 'Every ally gets +1 attack this turn, and the stag is ready again.' }
+  };
+
   const RULES = {
     maxField: 4, squadSize: 5, maxStructures: 2, ptsPerTurn: 2, ptsCap: 10, handMax: 7,
     surgeAt: 3, keeperHp: 25, lanes: 5, laneW: 3.6, unitZ: 2.8, structZ: 6.4, frontLine: 0, halfMin: 1.3, halfMax: 7.4, halfX: 9, spacing: 1.9, turnLimit: 40,
-    directHit: 1.25, graze: 2.3, startPts: [3, 4], secondBonus: null
+    directHit: 1.25, graze: 2.3, startPts: [3, 4], secondBonus: null,
+    /* Brawl rules (everything except the tutorial): short matches, a creature deck, a shared structure window */
+    v2: { keeperHp: 15, rounds: 8, overgrowthFrom: 7, ptsCap: 7, squadSize: 8, startHand: 3, brawlSecs: 15, secondBonusRounds: 3 }
   };
+  /* The tutorial keeps the original rules; every other match uses the Brawl rules. */
+  const isV2 = st => st.mode !== 'tutorial';
+  const roundOf = st => Math.ceil(st.turn / 2);
+  const keeperMult = st => (isV2(st) && roundOf(st) >= RULES.v2.overgrowthFrom ? 2 : 1);
+  function hitKeeper(st, side, amount, ev, extra) {
+    const foe = st.sides[1 - side], d = amount * keeperMult(st);
+    foe.hp = Math.max(0, foe.hp - d);
+    st.sides[side].stats.dmg += d; st.sides[side].stats.keeper = (st.sides[side].stats.keeper || 0) + d;
+    ev.push(Object.assign({ t: 'keeper', side: 1 - side, amount: d, hp: foe.hp, doubled: d > amount }, extra || {}));
+    return d;
+  }
 
   /* ---------- helpers ---------- */
   function rng(st) {
@@ -106,7 +135,7 @@
     return {
       uid: st.nextId++, id, side, lane, x: laneX(lane), z: sign(side) * RULES.unitZ, hp: c.hp, maxHp: c.hp, atk: c.atk, tmpAtk: 0, shield: 0,
       spiky: c.kw.includes('spiky'), burn: 0, jamNext: false, jammed: false, mudNext: 0, mud: 0,
-      sick: !c.kw.includes('swift'), attacksLeft: 1, first: true, encoreUsed: false
+      sick: !c.kw.includes('swift'), attacksLeft: 1, first: true, encoreUsed: false, primed: false, shell: false
     };
   }
 
@@ -114,15 +143,23 @@
   function newGame(opt) {
     const st = {
       seed: (opt.seed >>> 0) || ((Date.now() * 2654435761) >>> 0), turn: 0, active: 0, winner: null,
-      over: false, nextId: 1, sides: [], mode: opt.mode || 'normal'
+      over: false, nextId: 1, sides: [], mode: opt.mode || 'normal', phase: null
     };
+    const v2 = isV2(st);
     for (let i = 0; i < 2; i++) {
       const sq = opt.squads[i].slice();
+      const hp = v2 ? RULES.v2.keeperHp : RULES.keeperHp;
       st.sides.push({
         idx: i, name: opt.names ? opt.names[i] : (i ? 'Opponent' : 'You'), pts: (opt.startPts || RULES.startPts)[i],
-        surge: (opt.surgeStart || [0, 0])[i], reserve: sq.slice(), squad: sq.slice(), field: [], structs: [], hand: [],
-        freeDeploy: false, started: false, hp: RULES.keeperHp, maxHp: RULES.keeperHp, stats: { dmg: 0, kills: 0, spells: 0, shots: 0, hits: 0 }
+        surge: (opt.surgeStart || [0, 0])[i], reserve: sq.slice(), squad: sq.slice(), deck: [], field: [], structs: [], hand: [],
+        freeDeploy: false, started: false, hp, maxHp: hp, stats: { dmg: 0, kills: 0, spells: 0, shots: 0, hits: 0 }
       });
+      if (v2 && !opt.preset) {
+        /* shuffle the squad into a deck and draw an opening hand of creatures */
+        const s = st.sides[i], deck = sq.slice();
+        for (let k = deck.length - 1; k > 0; k--) { const j = Math.floor(rng(st) * (k + 1)); [deck[k], deck[j]] = [deck[j], deck[k]]; }
+        s.reserve = deck.slice(0, RULES.v2.startHand); s.deck = deck.slice(RULES.v2.startHand);
+      }
     }
     (opt.preset || []).forEach(p => {
       const s = st.sides[p.side];
@@ -214,6 +251,7 @@
   function dealDamage(st, t, amount, ev, kind, srcSide, adv) {
     if (!t || t.hp <= 0) return 0;
     let d = amount;
+    if (t.shell) { ev.push({ t: 'damage', uid: t.uid, amount: 0, absorbed: d, hp: t.hp, shield: t.shield, adv: false, kind, shell: true }); return 0; }
     if (hasKw(t, 'tough') && kind !== 'burn') d = Math.max(0, d - 1);
     let absorbed = 0;
     if (t.shield > 0) { absorbed = Math.min(t.shield, d); t.shield -= absorbed; d -= absorbed; }
@@ -267,12 +305,10 @@
     const u = unitById(st, uid);
     if (!u || u.side !== side || !canAttack(st, uid, tuid)) return null;
     if (tuid === KEEPER) {
-      const ev = [], foe = st.sides[1 - side], d = keeperDamage(st, u);
+      const ev = [], d = keeperDamage(st, u);
       u.first = false; u.attacksLeft--;
       ev.push({ t: 'attack', uid, target: KEEPER, keeper: true, side: 1 - side });
-      foe.hp = Math.max(0, foe.hp - d);
-      st.sides[side].stats.dmg += d; st.sides[side].stats.keeper = (st.sides[side].stats.keeper || 0) + d;
-      ev.push({ t: 'keeper', side: 1 - side, amount: d, hp: foe.hp });
+      hitKeeper(st, side, d, ev);
       ev.push({ t: 'attackEnd', uid });
       giveCard(st, side, signatureSpell(st, u), ev, 'attack', u.uid);
       if (hasKw(u, 'wish')) giveCard(st, side, signatureSpell(st, u), ev, 'wish', u.uid);
@@ -286,7 +322,10 @@
     u.first = false;
     u.attacksLeft--;
     ev.push({ t: 'attack', uid, target: tuid, adv });
-    dealDamage(st, t, d, ev, 'attack', side, adv);
+    const hpBefore = t.hp;
+    const dealt = dealDamage(st, t, d, ev, 'attack', side, adv);
+    /* Brawl rules: damage past a kill spills over into their Keeper */
+    if (isV2(st) && t.hp <= 0 && dealt > hpBefore) hitKeeper(st, side, dealt - hpBefore, ev, { overflow: true });
     if (hasKw(u, 'slime') && t.hp > 0) { t.atk = Math.max(0, t.atk - 1); ev.push({ t: 'status', uid: t.uid, status: 'slime' }); }
     if (t.spiky && u.hp > 0) dealDamage(st, u, 1, ev, 'spiky', t.side);
     ev.push({ t: 'attackEnd', uid });
@@ -334,9 +373,8 @@
     if (tuid === KEEPER) {
       const foe = st.sides[1 - side];
       ev.push({ t: 'cast', side, card, verb: sp.verb, target: KEEPER, keeper: true, keeperSide: 1 - side, pts: s.pts, from: caster ? caster.uid : null });
-      foe.hp = Math.max(0, foe.hp - sp.dmg);
-      s.stats.dmg += sp.dmg; s.stats.keeper = (s.stats.keeper || 0) + sp.dmg;
-      ev.push({ t: 'keeper', side: 1 - side, amount: sp.dmg, hp: foe.hp });
+      void foe;
+      hitKeeper(st, side, sp.dmg, ev);
       s.surge++;
       if (s.surge >= RULES.surgeAt) {
         s.surge = 0;
@@ -438,7 +476,9 @@
   }
   function canOperate(st, side, suid) {
     const t = structById(st, suid);
-    if (!t || st.over || st.active !== side || t.side !== side || t.used) return false;
+    if (!t || st.over || t.side !== side || t.used) return false;
+    /* Brawl rules: structures are worked only in the Brawl window, by both players at once */
+    if (isV2(st) ? st.phase !== 'brawl' : st.active !== side) return false;
     if (t.sid === 'bellows') return st.sides[side].field.length > 0;
     return true;
   }
@@ -474,11 +514,14 @@
     st.active = side;
     st.turn++;
     const s = st.sides[side];
-    if (s.started) s.pts = Math.min(RULES.ptsCap, s.pts + RULES.ptsPerTurn);
+    if (isV2(st)) {
+      s.pts = Math.min(RULES.v2.ptsCap, roundOf(st) + 1 + (side === 1 && roundOf(st) <= (RULES.v2.secondBonusRounds || 0) ? 1 : 0));
+      if (s.started && s.deck.length) { const id = s.deck.shift(); s.reserve.push(id); ev.push({ t: 'drawCreature', side, id }); }
+    } else if (s.started) s.pts = Math.min(RULES.ptsCap, s.pts + RULES.ptsPerTurn);
     s.started = true;
-    ev.push({ t: 'turn', side, turn: st.turn });
+    ev.push({ t: 'turn', side, turn: st.turn, round: roundOf(st), overgrowth: keeperMult(st) > 1 });
     s.field.slice().forEach(u => {
-      u.sick = false; u.attacksLeft = 1; u.encoreUsed = false;
+      u.sick = false; u.attacksLeft = 1; u.encoreUsed = false; u.shell = false;
       u.jammed = u.jamNext; u.jamNext = false;
       u.mud = u.mudNext; u.mudNext = 0;
       if (u.burn > 0) { u.burn--; dealDamage(st, u, 1, ev, 'burn', 1 - side); }
@@ -500,6 +543,23 @@
     s.field.forEach(u => { u.tmpAtk = 0; u.mud = 0; u.jammed = false; });
     s.freeDeploy = false;
     ev.push({ t: 'endTurn', side });
+    if (isV2(st)) {
+      if (side === 1 && roundOf(st) >= RULES.v2.rounds) {
+        /* out of rounds: the healthier Keeper wins, then whoever has more creature health on the field */
+        const score = st.sides.map(x => x.hp * 100 + x.field.reduce((a, u) => a + u.hp, 0));
+        st.over = true; st.winner = score[0] >= score[1] ? 0 : 1;
+        ev.push({ t: 'win', side: st.winner, reason: 'time' });
+        return ev;
+      }
+      if (side === 1 && st.sides.some(x => x.structs.length)) {
+        st.phase = 'brawl'; st.active = -1;
+        st.sides.forEach(x => x.structs.forEach(t => { t.used = false; }));
+        ev.push({ t: 'brawl', secs: RULES.v2.brawlSecs });
+        return ev;
+      }
+      startTurn(st, 1 - side, ev);
+      return ev;
+    }
     if (st.turn >= RULES.turnLimit) {
       const score = st.sides.map(x => x.hp + x.field.reduce((a, u) => a + u.hp, 0) + x.reserve.length * 5);
       st.over = true;
@@ -511,6 +571,79 @@
     return ev;
   }
 
+  /* The Brawl window closes and the next round starts with you. */
+  function endBrawl(st) {
+    if (st.over || st.phase !== 'brawl') return null;
+    st.phase = null;
+    const ev = [{ t: 'brawlEnd' }];
+    startTurn(st, 0, ev);
+    return ev;
+  }
+
+  /* ---------- Prime ---------- */
+  function canPrime(st, side, uid) {
+    const u = unitById(st, uid);
+    return !!u && isV2(st) && !st.over && st.phase !== 'brawl' && st.active === side && u.side === side && !u.primed;
+  }
+  /* the open lane a hopping creature likes best: nothing across (Keeper in reach), else across something it beats */
+  function bestHop(st, u) {
+    const foe = st.sides[1 - u.side];
+    let best = -1, bs = -1e9;
+    for (let l = 0; l < RULES.lanes; l++) {
+      if (l !== u.lane && !laneFree(st, u.side, l)) continue;
+      const across = foe.field.find(e => e.lane === l);
+      let sc = across ? (hasAdv(u, across) ? 4 : 0) + (across.hp <= attackPower(st, u) ? 3 : 0) - across.atk * 0.3 : 5;
+      if (l === u.lane) sc -= 0.5;
+      if (sc > bs) { bs = sc; best = l; }
+    }
+    return best;
+  }
+  function prime(st, side, uid) {
+    if (!canPrime(st, side, uid)) return null;
+    const u = unitById(st, uid), s = st.sides[side], foe = st.sides[1 - side], ev = [];
+    u.primed = true;
+    ev.push({ t: 'prime', uid, id: u.id, name: PRIMES[u.id].name, side });
+    const across = () => foe.field.find(e => e.lane === u.lane);
+    const ready = () => { u.attacksLeft = Math.max(1, u.attacksLeft); u.sick = false; u.jammed = false; ev.push({ t: 'status', uid: u.uid, status: 'ready' }); };
+    const hop = () => { const l = bestHop(st, u); if (l >= 0 && l !== u.lane) { u.lane = l; u.x = laneX(l); ev.push({ t: 'shift', uid: u.uid, lane: l, x: u.x, z: u.z }); } };
+    switch (u.id) {
+      case 'mossback': u.shell = true; ev.push({ t: 'shield', uid: u.uid, shield: u.shield, shell: true }); break;
+      case 'clover_hare': case 'puffwick': hop(); ready(); break;
+      case 'dandelion_sprite': giveCard(st, side, signatureSpell(st, u), ev, 'prime', u.uid); giveCard(st, side, signatureSpell(st, u), ev, 'prime', u.uid); break;
+      case 'lily_newt': s.field.forEach(a => { const h = Math.min(3, a.maxHp - a.hp); a.hp += h; ev.push({ t: 'heal', uid: a.uid, amount: h, hp: a.hp }); }); break;
+      case 'bog_toad': { const e = across(); if (e) { e.atk = Math.max(0, e.atk - 2); ev.push({ t: 'status', uid: e.uid, status: 'slime' }); } break; }
+      case 'emberling': foe.field.filter(e => Math.abs(e.lane - u.lane) <= 1).forEach(e => dealDamage(st, e, 2, ev, 'prime', side)); break;
+      case 'cinder_moth': foe.field.forEach(e => { e.burn = Math.max(e.burn, 2); ev.push({ t: 'status', uid: e.uid, status: 'burn' }); }); break;
+      case 'bramble_ox': u.first = true; ready(); break;
+      case 'pebble_golem': { const e = across(); if (e) dealDamage(st, e, 3, ev, 'prime', side); u.shield += 2; ev.push({ t: 'shield', uid: u.uid, shield: u.shield }); break; }
+      case 'clanker': ev.push({ t: 'stomp', uid: u.uid }); foe.field.slice().forEach(e => dealDamage(st, e, 1, ev, 'stomp', side)); u.atk += 1; ev.push({ t: 'buff', uid: u.uid, amount: 1 }); break;
+      case 'hollow_stag': s.field.forEach(a => { a.tmpAtk += 1; ev.push({ t: 'buff', uid: a.uid, amount: 1 }); }); ready(); break;
+    }
+    checkWin(st, ev);
+    return ev;
+  }
+  /* rough value of priming now, for the AI */
+  function primeValue(st, side, u) {
+    const s = st.sides[side], foe = st.sides[1 - side];
+    const across = foe.field.find(e => e.lane === u.lane);
+    const turnsLeft = isV2(st) ? RULES.v2.rounds - roundOf(st) : 10;
+    let v = 0;
+    switch (u.id) {
+      case 'mossback': v = foe.field.some(e => legalTargets(st, e).includes(u)) && u.hp < u.maxHp * 0.7 ? 5 : 0; break;
+      case 'clover_hare': case 'puffwick': v = (u.attacksLeft === 0 || !legalTargets(st, u).length) ? 4 : 0; break;
+      case 'dandelion_sprite': v = s.hand.length <= 2 ? 4 : 1; break;
+      case 'lily_newt': v = s.field.reduce((a, x) => a + Math.min(3, x.maxHp - x.hp), 0) - 2; break;
+      case 'bog_toad': v = across ? Math.min(2, across.atk) * 2 : 0; break;
+      case 'emberling': v = foe.field.filter(e => Math.abs(e.lane - u.lane) <= 1).reduce((a, e) => a + 2 + (e.hp <= 2 ? 5 : 0), 0) - 1; break;
+      case 'cinder_moth': v = foe.field.length * 1.6 - 1; break;
+      case 'bramble_ox': v = u.attacksLeft === 0 && (legalTargets(st, u).length || canHitKeeper(st, u)) ? 6 : 0; break;
+      case 'pebble_golem': v = across ? 3 + (across.hp <= 3 ? 5 : 0) : 0; break;
+      case 'clanker': v = foe.field.length * 1.2 + (foe.field.some(e => e.hp <= 1) ? 4 : 0); break;
+      case 'hollow_stag': v = s.field.filter(a => canAct(st, a) || a === u).length * 1.5 - 1; break;
+    }
+    return v + (turnsLeft <= 2 ? 2 : 0);
+  }
+
   function forfeit(st, side) {
     if (st.over) return null;
     st.over = true; st.winner = 1 - side;
@@ -519,7 +652,7 @@
 
   function checkWin(st, ev) {
     if (st.over) return;
-    const out = st.sides.map(s => s.hp <= 0 || (s.field.length === 0 && s.reserve.length === 0));
+    const out = st.sides.map(s => s.hp <= 0 || (s.field.length === 0 && s.reserve.length === 0 && !(s.deck && s.deck.length)));
     if (out[0] || out[1]) {
       st.over = true;
       st.winner = out[0] && out[1] ? st.active : (out[0] ? 1 : 0);
@@ -537,6 +670,8 @@
       case 'build': return build(st, side, a.sid, a.lane);
       case 'operate': return operate(st, side, a.uid, a.payload || {});
       case 'end': return endTurn(st, side);
+      case 'prime': return prime(st, side, a.uid);
+      case 'endBrawl': return endBrawl(st);
       case 'forfeit': return forfeit(st, side);
     }
     return null;
@@ -550,6 +685,7 @@
     if (s.field.length < RULES.maxField && s.reserve.some(id => deployCost(st, side, id) <= s.pts)) return true;
     if (s.hand.some(c => SPELLS[c].cost <= s.pts && (SPELLS[c].target === 'none' || spellHitsKeeper(c) || spellTargets(st, side, c).length))) return true;
     if (s.structs.some(t => canOperate(st, side, t.uid))) return true;
+    if (s.field.some(u => canPrime(st, side, u.uid) && primeValue(st, side, u) >= 3)) return true;
     return false;
   }
 
@@ -622,6 +758,7 @@
       if (l >= 0) ['slingshot', 'bellows'].forEach(sid => out.push({ type: 'build', sid, lane: l }));
     }
     s.field.forEach(u => { if (canAct(st, u)) [u.lane - 1, u.lane + 1].forEach(l => { if (laneFree(st, side, l)) out.push({ type: 'shift', uid: u.uid, lane: l }); }); });
+    s.field.forEach(u => { if (canPrime(st, side, u.uid)) out.push({ type: 'prime', uid: u.uid }); });
     s.structs.forEach(t => {
       if (!canOperate(st, side, t.uid)) return;
       if (t.sid === 'slingshot') o.field.forEach(e => out.push({ type: 'operate', uid: t.uid, payload: { x: e.x, z: e.z }, aimAt: e.uid }));
@@ -648,6 +785,22 @@
   }
 
   const AI = {
+    /* The Brawl window: work each of this side's structures once. */
+    brawl(st, side, diff) {
+      diff = diff || 'normal';
+      const o = st.sides[1 - side], out = [];
+      st.sides[side].structs.forEach(t => {
+        if (!canOperate(st, side, t.uid)) return;
+        if (t.sid === 'slingshot' && o.field.length) {
+          const tg = diff === 'easy' ? o.field[Math.floor(rng(st) * o.field.length)] : o.field.slice().sort((a, b) => a.hp - b.hp)[0];
+          const sigma = diff === 'easy' ? 2.2 : diff === 'hard' ? 0.7 : 1.3;
+          out.push({ type: 'operate', uid: t.uid, payload: { x: tg.x + gauss(st) * sigma, z: tg.z + gauss(st) * sigma } });
+        } else if (t.sid === 'bellows' && st.sides[side].field.length) {
+          out.push({ type: 'operate', uid: t.uid, payload: { pumps: diff === 'easy' ? 1 + Math.floor(rng(st) * 2) : diff === 'hard' ? 3 : 2 + Math.floor(rng(st) * 2) } });
+        }
+      });
+      return out;
+    },
     next(st, side, diff) {
       diff = diff || 'normal';
       if (st.over || st.active !== side) return null;
@@ -656,6 +809,11 @@
       const R = () => rng(st);
 
       if (diff !== 'tutorial') {
+        /* prime when it's clearly worth it */
+        const pth = diff === 'easy' ? 7 : 4;
+        const pr = s.field.filter(u => canPrime(st, side, u.uid)).map(u => ({ u, v: primeValue(st, side, u) })).sort((a, b) => b.v - a.v)[0];
+        if (pr && pr.v >= pth && !(diff === 'easy' && R() < 0.5)) return { type: 'prime', uid: pr.u.uid };
+
         /* deploy */
         const maxF = diff === 'easy' ? 3 : RULES.maxField;
         if (s.reserve.length && s.field.length < maxF) {
@@ -767,8 +925,8 @@
   };
 
   MW.Rules = {
-    FAMILIES, KEYWORDS, CREATURES, SPELLS, VERBS, STRUCTURES, RULES,
-    newGame, apply, deploy, attack, cast, fizzle, build, operate, endTurn, forfeit,
+    FAMILIES, KEYWORDS, CREATURES, SPELLS, VERBS, STRUCTURES, RULES, PRIMES,
+    newGame, apply, deploy, attack, cast, fizzle, build, operate, endTurn, forfeit, endBrawl, prime, canPrime, primeValue, isV2, roundOf, keeperMult,
     KEEPER, canHitKeeper, spellHitsKeeper, keeperDamage, canDeploy, canAttack, canCast, canBuild, canOperate, canAct, canPlace, inHalf, canShift, shift,
     laneX, laneAt, laneFree, structFree,
     legalTargets, spellTargets, previewDamage, attackPower, hasAdv, deployCost, isFront,

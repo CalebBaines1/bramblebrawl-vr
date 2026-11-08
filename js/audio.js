@@ -1,4 +1,4 @@
-/* Bramblebrawl audio: synthesized effects and a gentle generative meadow tune. No files to load. */
+/* Hivebound audio: synthesized effects and a gentle generative meadow tune. No files to load. */
 (function (root) {
   'use strict';
   const MW = root.MW = root.MW || {};
