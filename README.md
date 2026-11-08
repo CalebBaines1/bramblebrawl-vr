@@ -30,8 +30,12 @@ original name, `bramblebrawl-vr`, so the GitHub Pages link stays the same.
     reality and the meadow without leaving (on headsets with passthrough).
   - Your cards float over your left hand. Grab one with your right hand (pinch, trigger or grip) and let go
     over a lane, or tap it and then tap the lane. Hold a grabbed spell to crush it.
-  - The strip on your left sleeve has four icons: **Creatures** (creatures and structures), **Spells**,
-    **Hide** (put the cards away) and **Pause** (resume, board setup, quit to the main menu, or exit VR).
+  - Turn your left palm up to see the icons on the underside of your sleeve: **Creatures** (creatures and
+    structures), **Spells**, **Hide** (put the cards away), **End turn** (lit on your turn, pulsing when you're
+    out of moves; it reads **Done** during the Brawl) and **Pause** (resume, board setup, quit, exit VR).
+  - To attack, point at one of your creatures, pinch (or pull the trigger) and drag onto an enemy creature or
+    their Keeper, then let go. With hand tracking you can also touch your creature on the board and slide your
+    fingertip onto the target.
   - Cards you draw float from your Keeper into your hand.
   - Your hands show as cartoon gloves with sleeves, with hand tracking or controllers. With hand tracking
     you can tap menus, cards, sleeve icons and the board with your index finger.
