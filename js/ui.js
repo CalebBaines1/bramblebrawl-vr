@@ -471,6 +471,10 @@
     if (!Game.tutorial) add('Forfeit this battle', () => {
       modal({ eye: 'Forfeit', title: 'Give up this battle?', body: 'It counts as a loss.', buttons: [{ label: 'Keep playing', fn: () => setPaused(false) }, { label: 'Forfeit', primary: true, fn: async () => { setPaused(false); const st = Game.st; const ev = R.forfeit(st, 0); if (ev) { Game.busy = true; await playSafe(ev, st); Game.busy = false; finish(); } } }] });
     });
+    if (MW.XR && MW.XR.active) {
+      add('Board setup', () => { closeModal(); setPaused(false); MW.XR.beginSetup(); });
+      add('Exit VR', () => { closeModal(); setPaused(false); MW.XR.end(); });
+    }
     add(Game.tutorial ? 'Leave the tutorial' : 'Quit to main menu', () => {
       modal({ eye: 'Quit', title: 'Leave the meadow?', body: Game.tutorial ? 'You can replay the tutorial any time from the menu.' : 'This battle will not count.', buttons: [{ label: 'Stay', fn: () => setPaused(false) }, { label: 'Quit', primary: true, fn: () => { setPaused(false); if (Game.tutorial) Bus.emit('tutorialQuit'); show('title'); } }] });
     });
@@ -1160,7 +1164,7 @@
 
   MW.UI = {
     boot, show, startMatch, endMatch, toast, banner, modal, closeModal, render, Game, Bus, progress, settings, saveProgress,
-    gate: null, tutorialZone: false, setPaused, cancelMode, get mode() { return mode; },
+    gate: null, tutorialZone: false, setPaused, cancelMode, openPause, get mode() { return mode; },
     _dbg: { act, endTurn },
     cardHTML(kind, id) { return kind === 'creature' ? creatureCardHTML(id) : kind === 'struct' ? structCardHTML(id) : spellCardHTML(id, 0); },
     aiHook: null
