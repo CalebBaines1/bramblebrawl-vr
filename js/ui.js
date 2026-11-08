@@ -1166,6 +1166,7 @@
     boot, show, startMatch, endMatch, toast, banner, modal, closeModal, render, Game, Bus, progress, settings, saveProgress,
     gate: null, tutorialZone: false, setPaused, cancelMode, openPause, get mode() { return mode; },
     _dbg: { act, endTurn },
+    xrCast(target) { if (mode.k === 'armed') castArmed(target); },
     cardHTML(kind, id) { return kind === 'creature' ? creatureCardHTML(id) : kind === 'struct' ? structCardHTML(id) : spellCardHTML(id, 0); },
     aiHook: null
   };
