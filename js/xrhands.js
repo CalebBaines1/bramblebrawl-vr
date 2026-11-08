@@ -173,6 +173,8 @@
     const mode = UI().mode;
     const n = H.cards.length, spread = Math.min(0.17, 1.35 / Math.max(1, n)), rad = 0.2;
     const rp = rightPointer();
+    const near = rp && !H.grab ? cardNear(grabPoint(rp)) : null;
+    H.cards.forEach(c => { c.hover = c === near; });
     H.cards.forEach((c, i) => {
       const m = c.mesh;
       const held = mode && ((mode.k === 'place' && c.el.classList.contains('sel')) || ((mode.k === 'crushing' || mode.k === 'armed') && c.el.dataset.hi !== undefined && +c.el.dataset.hi === mode.hi));
@@ -191,10 +193,11 @@
         return;
       }
       const a = (i - (n - 1) / 2) * spread;
-      const target = new T.Vector3(Math.sin(a) * rad, Math.cos(a) * rad - rad + (c.hover ? 0.015 : 0), i * 0.0015);
+      c.slot = new T.Vector3(Math.sin(a) * rad, Math.cos(a) * rad - rad, i * 0.0015);
+      const target = c.slot.clone().add(new T.Vector3(0, c.hover ? 0.022 : 0, c.hover ? 0.02 : 0));
       m.position.lerp(target, 0.35);
       m.rotation.set(0, 0, -a);
-      let k = 1;
+      let k = c.hover ? 1.15 : 1;
       if (mode && mode.k === 'crushing' && held) k = 1 - 0.35 * (parseFloat(c.el.style.getPropertyValue('--p')) || 0);
       const asp = m.material.map && m.material.map.image ? m.material.map.image.width / m.material.map.image.height : 0.72;
       m.scale.set(CARD_H * asp * k, CARD_H * k, 1);
@@ -207,15 +210,7 @@
       const hit = raycaster.intersectObjects(H.strip.btns.map(b => b.mesh), false)[0];
       if (hit) { const b = H.strip.btns.find(q => q.mesh === hit.object); const lc = XR()._st.lastClient; return { kind: 'fn', fn: b.fn, point: hit.point, dist: hit.distance, x: lc.x, y: lc.y }; }
     }
-    if (!H.fan || !H.fan.visible || H.shown < 0.6) return null;
-    const list = H.cards.filter(c => !c.held).map(c => c.mesh);
-    const hit = raycaster.intersectObjects(list, false)[0];
-    H.cards.forEach(c => { c.hover = !!hit && hit.object === c.mesh; });
-    if (!hit) return null;
-    const el = hit.object.userData.el;
-    if (!el || !document.body.contains(el)) return null;
-    const r = el.getBoundingClientRect();
-    return { kind: 'card', el, point: hit.point, dist: hit.distance, x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    return null; /* cards in your hand are grabbed, not clicked */
   }
 
   /* ---------- grabbing a card with your right hand ---------- */
@@ -227,41 +222,65 @@
     p.ctrl.updateMatrixWorld();
     return new T.Vector3().setFromMatrixPosition(p.ctrl.matrixWorld).add(new T.Vector3(0, 0, -0.03).applyQuaternion(p.ctrl.getWorldQuaternion(tmpQ)));
   }
+  /* the card your hand is over, judged in the fan's own plane against each card's resting slot,
+     so a card lifting toward you doesn't steal the grab from its neighbour */
   function cardNear(P) {
     if (!H.fan || !H.fan.visible || H.shown < 0.6) return null;
-    let best = null, bd = 0.06;
+    const l = H.fan.worldToLocal(P.clone()), k = H.fan.scale.x || 1;
+    if (Math.abs(l.z * k) > 0.08) return null;
+    let best = null, bd = 0.055 / k;
     for (const c of H.cards) {
-      if (c.held || !c.el || !document.body.contains(c.el)) continue;
-      const l = c.mesh.worldToLocal(P.clone());
-      if (Math.abs(l.x) > 0.8 || Math.abs(l.y) > 0.8) continue;
-      const d = c.mesh.getWorldPosition(new T.Vector3()).distanceTo(P);
+      if (c.held || !c.slot || !c.el || !document.body.contains(c.el)) continue;
+      const d = Math.hypot(l.x - c.slot.x, l.y - c.slot.y - CARD_H * 0.15);
       if (d < bd) { bd = d; best = c; }
     }
     return best;
   }
-  function boardUnder(P) {
+  /* where a point sits over the board, projected straight down; near: only when close to the surface */
+  function boardAt(P, near) {
     const st = XR()._st;
     if (!st.placed || st.placing) return null;
     const l = Sc().board.worldToLocal(P.clone());
     const above = l.y * XR().scale();
-    if (Math.abs(l.x) > 13.5 || Math.abs(l.z) > 12.75 || above > 0.3 || above < -0.08) return null;
+    if (near && (Math.abs(l.x) > 14 || Math.abs(l.z) > 13.5 || above > 0.12 || above < -0.06)) return null;
     const s2 = Sc().boardToScreen(l.x, 0, l.z);
     return { kind: 'board', x: s2.x, y: s2.y, local: l };
   }
+  function boardUnder(P) {
+    const b = boardAt(P, false);
+    if (!b) return null;
+    const l = b.local, above = l.y * XR().scale();
+    return Math.abs(l.x) > 13.5 || Math.abs(l.z) > 12.75 || above > 0.3 || above < -0.08 ? null : b;
+  }
+  function startGrab(p, kind) {
+    const ps = { down: false, downTarget: null };
+    H.grab = { p, ps, kind };
+    p.poking = true;
+    XR()._st.active = -1;
+    const i = H.pokes.findIndex((q, k) => XR()._st.pointers[k] === p); if (i >= 0) { H.pokes[i].poking = false; H.pokes[i].pending = null; }
+    return ps;
+  }
+  /* pinch (or trigger, or grip) near something to grab it: a card in your hand, or a creature, slingshot or bellows on the board */
   function grabSelect(p, down) {
     if (down) {
-      if (H.grab || p.handedness === 'left' || !matchOn()) return false;
-      const c = cardNear(grabPoint(p));
-      if (!c) return false;
-      const r = c.el.getBoundingClientRect();
-      const ps = { down: false, downTarget: null };
-      H.grab = { p, ps };
-      p.poking = true;
-      XR()._st.active = -1;
-      const i = H.pokes.findIndex((q, k) => XR()._st.pointers[k] === p); if (i >= 0) H.pokes[i].poking = false;
-      if (MW.Audio) MW.Audio.play('select');
-      XR().pressAt({ kind: 'card', el: c.el, x: r.left + r.width / 2, y: r.top + r.height / 2 }, true, ps);
-      return true;
+      if (H.grab || !matchOn()) return false;
+      const P = grabPoint(p);
+      const c = p.handedness !== 'left' ? cardNear(P) : null;
+      if (c) {
+        const r = c.el.getBoundingClientRect();
+        const ps = startGrab(p, 'card');
+        if (MW.Audio) MW.Audio.play('select');
+        XR().pressAt({ kind: 'card', el: c.el, x: r.left + r.width / 2, y: r.top + r.height / 2 }, true, ps);
+        return true;
+      }
+      const b = boardAt(P, true);
+      if (b && UI().mode.k !== 'armed') {
+        const ps = startGrab(p, 'board');
+        Sc().setXRRay(boardRay(P));
+        XR().pressAt(b, true, ps);
+        return true;
+      }
+      return false;
     }
     if (!H.grab || H.grab.p !== p) return false;
     endGrab();
@@ -270,24 +289,82 @@
   function updateGrab() {
     const g = H.grab; if (!g) return;
     if (!g.p.connected || !XR().active) { endGrab(true); return; }
-    const mode = UI().mode;
+    const mode = UI().mode, P = grabPoint(g.p);
+    if (g.kind === 'board') { const b = boardAt(P, false); if (b) { Sc().setXRRay(boardRay(P)); XR().moveAt(b); g.last = b; } return; }
+    if (mode.k === 'armed') { aimSpell(P); return; }
     if (mode.k !== 'place') return;
-    const P = grabPoint(g.p), b = boardUnder(P);
+    const b = boardUnder(P);
     if (b) { Sc().setXRRay(boardRay(P)); XR().moveAt(b); }
   }
   function endGrab(cancel) {
     const g = H.grab; if (!g) return;
     H.grab = null;
     const mode = UI().mode, P = grabPoint(g.p);
-    const b = !cancel && mode.k === 'place' ? boardUnder(P) : null;
-    if (b) { Sc().setXRRay(boardRay(P)); XR().pressAt(b, false, g.ps); }
-    else {
-      const lc = XR()._st.lastClient;
-      XR().pressAt({ kind: 'none', x: lc.x, y: lc.y }, false, g.ps);
-      if (UI().mode.k === 'place') UI().cancelMode();
+    try {
+      if (g.kind === 'board') {
+        const b = boardAt(P, false) || g.last;
+        if (b) { Sc().setXRRay(boardRay(P)); XR().pressAt(b, false, g.ps); }
+        else { const lc = XR()._st.lastClient; XR().pressAt({ kind: 'none', x: lc.x, y: lc.y }, false, g.ps); }
+        return;
+      }
+      if (mode.k === 'armed') {
+        /* a crushed spell: let go over its target to cast it */
+        const lc = XR()._st.lastClient;
+        XR().pressAt({ kind: 'none', x: lc.x, y: lc.y }, false, g.ps);
+        const t = cancel ? undefined : spellTargetAt(P);
+        clearSpellAim();
+        if (t !== undefined) UI().xrCast(t);
+        else if (!cancel && UI().toast) UI().toast('Grab it again and let go over ' + (R().SPELLS[mode.card].target === 'ally' ? 'one of your creatures.' : 'an enemy.'));
+        return;
+      }
+      const b = !cancel && mode.k === 'place' ? boardUnder(P) : null;
+      if (b) { Sc().setXRRay(boardRay(P)); XR().pressAt(b, false, g.ps); }
+      else {
+        const lc = XR()._st.lastClient;
+        XR().pressAt({ kind: 'none', x: lc.x, y: lc.y }, false, g.ps);
+        if (UI().mode.k === 'place') UI().cancelMode();
+      }
+    } finally {
+      g.p.poking = false;
+      XR()._st.active = g.p.i;
     }
-    g.p.poking = false;
-    XR()._st.active = g.p.i;
+  }
+
+  /* ---------- casting: a crushed spell glows in your hand; let go over the target ---------- */
+  const VERB_COL = { aim: 0xe24b4a, push: 0x7fc8f8, tend: 0x6cc644, surge: 0xfac775 };
+  function spellTargetAt(P) {
+    const st = UI().Game.st, mode = UI().mode;
+    if (!st || mode.k !== 'armed') return undefined;
+    const sp = R().SPELLS[mode.card];
+    if (sp.target === 'none') return null;
+    const b = boardAt(P, false); if (!b) return undefined;
+    const l = b.local;
+    let best, bd = 3.6;
+    R().spellTargets(st, 0, mode.card).forEach(u => { const d = Math.hypot(u.x - l.x, u.z - l.z); if (d < bd) { bd = d; best = u.uid; } });
+    if (best) return best;
+    if (R().spellHitsKeeper(mode.card)) { const k = Sc().keeperPos(1); if (k && Math.hypot(k.x - l.x, k.z - l.z) < 5) return R().KEEPER; }
+    return undefined;
+  }
+  function aimSpell(P) {
+    const mode = UI().mode;
+    if (!H.orb) {
+      H.orb = new T.Mesh(new T.SphereGeometry(0.022, 16, 12), new T.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 }));
+      H.orb.renderOrder = 28; Sc().stage.add(H.orb);
+    }
+    const sp = R().SPELLS[mode.card];
+    H.orb.material.color.setHex(VERB_COL[sp.verb] || 0xffffff);
+    H.orb.visible = true;
+    H.orb.position.copy(P);
+    H.orb.scale.setScalar(1 + 0.15 * Math.sin(performance.now() / 120));
+    const t = spellTargetAt(P);
+    const st = UI().Game.st;
+    if (t && t !== R().KEEPER) Sc().targetRings(st.sides[sp.target === 'ally' ? 0 : 1].field.map(u => ({ uid: u.uid, color: u.uid === t ? 0xfac775 : 0x8a8a8a })));
+    else Sc().targetRings([]);
+    if (R().spellHitsKeeper(mode.card)) Sc().keeperGlow(1, t === R().KEEPER);
+  }
+  function clearSpellAim() {
+    if (H.orb) H.orb.visible = false;
+    Sc().targetRings([]); Sc().keeperGlow(1, false);
   }
 
   /* ---------- cards you draw float from your deck into your hand ---------- */
@@ -687,14 +764,6 @@
     if (!isFanHand && H.strip && H.strip.root.visible) {
       for (const b of H.strip.btns) if (touchButton(b.mesh, P, slack)) return { kind: 'fn', fn: b.fn, key: b.key, x: lc.x, y: lc.y };
     }
-    /* cards in your other hand */
-    if (!isFanHand && H.fan && H.fan.visible && H.shown > 0.6) {
-      for (const c of H.cards) {
-        if (c.held) continue;
-        const t = touchPlane(c.mesh, P, slack);
-        if (t && c.el && document.body.contains(c.el)) { const r = c.el.getBoundingClientRect(); return { kind: 'card', el: c.el, x: r.left + r.width / 2, y: r.top + r.height / 2 }; }
-      }
-    }
     /* floating menus and HUD */
     const st = XR()._st;
     for (const q of st.panels) {
@@ -777,7 +846,7 @@
     H.mitts.forEach((m, i) => { const p = st.pointers[i]; m.visible = !!(p && p.connected && !p.hand && H.grips[i].userData.connected); });
     if (!tipped && matchOn() && UI().Game.st.active === 0) {
       tipped = true;
-      setTimeout(() => { if (XR().active && UI().toast) UI().toast('Your cards float over your left hand. Grab one with your right hand and let go over a lane. Turn your left palm up to see the icons under your sleeve: creatures, spells, hide, end turn and pause.'); }, 2500);
+      setTimeout(() => { if (XR().active && UI().toast) UI().toast('Your cards float over your left hand. Grab one with your right hand and let go over a lane. Pinch your creatures, the slingshot or the bellows on the board to grab them too. Turn your left palm up to see the icons under your sleeve: creatures, spells, hide, end turn and pause.'); }, 2500);
     }
   }
   function beforeSession() {
@@ -806,7 +875,7 @@
     x.hooks.select.push(grabSelect);
     x.hooks.squeeze.push(grabSelect);
     x.hooks.start.push((mode, relayout) => { if (H.av) layoutAvatar(); if (!relayout) { tipped = false; H.drawBase = null; H.drawSt = UI().Game.st; } });
-    x.hooks.stop.push(() => { H.grab = null; H.tw.forEach(t => t.res()); H.tw = []; if (H.fan) H.fan.visible = false; if (H.strip) H.strip.root.visible = false; if (H.av) { H.av.root.visible = false; H.av.busy = false; } });
+    x.hooks.stop.push(() => { H.grab = null; if (H.orb) H.orb.visible = false; H.tw.forEach(t => t.res()); H.tw = []; if (H.fan) H.fan.visible = false; if (H.strip) H.strip.root.visible = false; if (H.av) { H.av.root.visible = false; H.av.busy = false; } });
     const hook = () => { if (UI()) UI().aiHook = (a, st) => act(a, st); else setTimeout(hook, 50); };
     hook();
   }

@@ -28,14 +28,16 @@ original name, `bramblebrawl-vr`, so the GitHub Pages link stays the same.
     **Done**. Squeeze the grip, press **Board setup**, or pick it from the pause menu to redo it.
   - **Play on your table** and **Play in VR** also work from inside the headset: they switch between mixed
     reality and the meadow without leaving (on headsets with passthrough).
-  - Your cards float over your left hand. Grab one with your right hand (pinch, trigger or grip) and let go
-    over a lane, or tap it and then tap the lane. Hold a grabbed spell to crush it.
+  - Your cards float over your left hand, and the one your right hand is over lifts up. Grab it (pinch,
+    trigger or grip) and let go over a lane.
+  - Spells: grab the spell card and keep holding until it crushes into a glowing orb, then let go over the
+    target (an enemy, one of your creatures, or anywhere for spells with no target).
+  - On the board, pinch close to a creature, the slingshot or the bellows to grab it: drag a creature onto an
+    enemy to attack, pull the slingshot back toward you and let go to fire, pinch the bellows to pump.
   - Turn your left palm up to see the icons on the underside of your sleeve: **Creatures** (creatures and
     structures), **Spells**, **Hide** (put the cards away), **End turn** (lit on your turn, pulsing when you're
     out of moves; it reads **Done** during the Brawl) and **Pause** (resume, board setup, quit, exit VR).
-  - To attack, point at one of your creatures, pinch (or pull the trigger) and drag onto an enemy creature or
-    their Keeper, then let go. With hand tracking you can also touch your creature on the board and slide your
-    fingertip onto the target.
+  - From further away you can still point a ray at the board and pinch (or pull the trigger) as before.
   - Cards you draw float from your Keeper into your hand.
   - Your hands show as cartoon gloves with sleeves, with hand tracking or controllers. With hand tracking
     you can tap menus, cards, sleeve icons and the board with your index finger.
