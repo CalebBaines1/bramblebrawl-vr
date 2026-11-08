@@ -1,6 +1,7 @@
 /* Hivebound XR hands: your hand of cards and the opponent across the table.
-   - Turn your left hand so its side faces you and your cards fan out above it. Point at one with your right
-     hand, pull the trigger (or pinch) and drag it onto the board, exactly like the tray.
+   - Your cards float over your left hand. Grab one with your right hand (pinch, trigger or grip) and let go
+     over a lane, or point and click it like the tray. Icons on your left sleeve pick creatures or spells,
+     hide the cards, or pause.
    - The opponent is a little bramble sprite sitting across the table. Before each of its moves it picks a card
      from its own hand, flips it, and carries it to the lane (or reaches out to its creature or structure).
    Everything here is presentation: moves still go through the same UI and rules code as the desktop. */
@@ -95,15 +96,22 @@
   function matchOn() { const u = UI(); return !!(u && u.Game.st && !u.Game.st.over && !document.querySelector('#hud').hidden && !document.querySelector('#modal.show')); }
 
   /* ---------- your hand of cards ---------- */
+  /* The strip on your left sleeve picks what floats over your left hand: creatures (and structures), spells,
+     or nothing. Grab a card with your right hand (pinch, trigger or grip) and let go over a lane, or tap it. */
   const CARD_H = 0.075;
+  H.tab = 'creatures';
   function buildFan() {
     H.fan = new T.Group(); H.fan.visible = false; H.fan.scale.setScalar(0.001);
     Sc().stage.add(H.fan);
   }
+  function tabCards() {
+    const groups = H.tab === 'spells' ? ['#g-spells'] : H.tab === 'creatures' ? ['#g-reserve', '#g-build'] : [];
+    return groups.flatMap(g => [...document.querySelectorAll('#hand ' + g + ' .card')]).filter(e => !e.classList.contains('used')).slice(0, 14);
+  }
   function syncCards() {
-    const els = [...document.querySelectorAll('#hand .card')].filter(e => !e.classList.contains('used')).slice(0, 14);
-    const sig = els.map(e => e.outerHTML.length + e.className).join('|');
-    if (sig === H.sig && H.cards.length === els.length) { H.cards.forEach((c, i) => { c.el = els[i]; }); return; }
+    const els = tabCards();
+    const sig = H.tab + ':' + els.map(e => e.outerHTML.length + e.className).join('|');
+    if (sig === H.sig && H.cards.length === els.length) { H.cards.forEach((c, i) => { c.el = els[i]; c.mesh.userData.el = els[i]; }); return; }
     H.sig = sig;
     while (H.cards.length > els.length) { const c = H.cards.pop(); H.fan.remove(c.mesh); }
     while (H.cards.length < els.length) { const m = cardMesh(CARD_H); m.renderOrder = 25; H.fan.add(m); H.cards.push({ mesh: m, el: null }); }
@@ -115,30 +123,43 @@
       c.mesh.userData.el = el;
     });
   }
-  function updateFan(dt) {
-    const g = leftGrip();
-    let want = false;
-    const head = headPos(new T.Vector3());
-    if (g && matchOn()) {
-      g.updateMatrixWorld();
-      const pos = new T.Vector3().setFromMatrixPosition(g.matrixWorld);
-      const xAxis = new T.Vector3(1, 0, 0).applyQuaternion(g.getWorldQuaternion(tmpQ));
-      const toHead = head.clone().sub(pos);
-      const dist = toHead.length(); toHead.normalize();
-      const side = xAxis.dot(toHead);
-      /* hysteresis so the fan doesn't flicker at the edge */
-      want = dist < 0.85 && Math.abs(side) > (H.show ? 0.35 : 0.5);
-      if (want) {
-        const up = new T.Vector3(0, 1, 0);
-        const anchor = pos.clone().addScaledVector(toHead, 0.05).addScaledVector(up, 0.085);
-        H.fan.position.lerp(anchor, H.shown < 0.05 ? 1 : 0.5);
-        H.fan.lookAt(head);
+  /* where your left hand is: wrist, palm centre and the direction your fingers point */
+  function handSide(i) { const v = H.hands[i], p = XR()._st.pointers[i]; return (v && v.hand.userData.handedness) || (p && p.handedness) || (i === 0 ? 'left' : 'right'); }
+  function handFrame(side) {
+    for (let i = 0; i < H.hands.length; i++) {
+      if (handSide(i) !== side) continue;
+      const J = H.hands[i].hand.joints || {};
+      if (J.wrist && J.wrist.visible && J['middle-finger-metacarpal']) {
+        const wrist = J.wrist.getWorldPosition(new T.Vector3());
+        const mid = J['middle-finger-metacarpal'].getWorldPosition(new T.Vector3());
+        const fwd = mid.clone().sub(wrist).normalize();
+        return { wrist, palm: wrist.clone().lerp(mid, 0.75), fwd, tracked: true, i };
       }
+      const g = H.grips[i];
+      if (g && g.userData.connected) {
+        g.updateMatrixWorld();
+        const pos = new T.Vector3().setFromMatrixPosition(g.matrixWorld);
+        const fwd = new T.Vector3(0, 0, -1).applyQuaternion(g.getWorldQuaternion(tmpQ)).normalize();
+        return { wrist: pos.clone().addScaledVector(fwd, -0.06), palm: pos.clone(), fwd, tracked: false, i };
+      }
+    }
+    return null;
+  }
+  function updateFan(dt) {
+    const L = matchOn() ? handFrame('left') : null;
+    const head = headPos(new T.Vector3());
+    const want = !!(L && H.tab !== 'hide' && !XR()._st.setup && !UI().Game.paused && L.palm.distanceTo(head) < 0.85);
+    if (want) {
+      const toHead = head.clone().sub(L.palm).normalize();
+      const anchor = L.palm.clone().addScaledVector(toHead, 0.03).add(new T.Vector3(0, 0.1, 0));
+      H.fan.position.lerp(anchor, H.shown < 0.05 ? 1 : 0.5);
+      H.fan.lookAt(head);
+      H.anchor = anchor;
     }
     H.show = want;
     H.shown += ((want ? 1 : 0) - H.shown) * Math.min(1, dt * 12);
     H.fan.visible = H.shown > 0.02;
-    XR()._st.hideTray = H.shown > 0.3;
+    XR()._st.hideTray = !!L && (H.shown > 0.3 || H.tab === 'hide'); /* your hand of cards replaces the floating tray */
     H.fan.scale.setScalar(Math.max(0.001, H.shown));
     if (!H.fan.visible) return;
     syncCards();
@@ -149,14 +170,17 @@
       const m = c.mesh;
       const held = mode && ((mode.k === 'place' && c.el.classList.contains('sel')) || ((mode.k === 'crushing' || mode.k === 'armed') && c.el.dataset.hi !== undefined && +c.el.dataset.hi === mode.hi));
       c.held = held;
-      if (held && rp && mode.k === 'place') {
-        /* the card you picked rides on your right hand until you drop it */
-        rp.ctrl.updateMatrixWorld();
-        const p = new T.Vector3().setFromMatrixPosition(rp.ctrl.matrixWorld).add(new T.Vector3(0, 0, -0.07).applyQuaternion(rp.ctrl.getWorldQuaternion(tmpQ)));
+      const grabbed = held && H.grab;
+      if (grabbed || (held && rp && mode.k === 'place')) {
+        /* the card you picked rides in your right hand until you drop it */
+        let p;
+        if (grabbed) p = grabPoint(H.grab.p).add(new T.Vector3(0, 0.03, 0));
+        else { rp.ctrl.updateMatrixWorld(); p = new T.Vector3().setFromMatrixPosition(rp.ctrl.matrixWorld).add(new T.Vector3(0, 0, -0.07).applyQuaternion(rp.ctrl.getWorldQuaternion(tmpQ))); }
         H.fan.worldToLocal(p);
-        m.position.lerp(p, 0.5);
+        m.position.lerp(p, grabbed ? 0.7 : 0.5);
         m.rotation.set(0, 0, 0);
-        m.scale.set(CARD_H * 0.8 * (m.scale.x / m.scale.y), CARD_H * 0.8, 1);
+        const k = mode.k === 'crushing' ? 1 - 0.35 * (parseFloat(c.el.style.getPropertyValue('--p')) || 0) : 1;
+        m.scale.set(CARD_H * 0.8 * k * (m.scale.x / m.scale.y), CARD_H * 0.8 * k, 1);
         return;
       }
       const a = (i - (n - 1) / 2) * spread;
@@ -169,9 +193,14 @@
       m.scale.set(CARD_H * asp * k, CARD_H * k, 1);
     });
   }
-  /* pointer aiming at a card in your hand */
+  /* pointer aiming at a card in your hand, or at a button on your sleeve */
   function aimCards(raycaster, p) {
-    if (!H.fan || !H.fan.visible || H.shown < 0.6 || p.handedness === 'left') return null;
+    if (p.handedness === 'left') return null;
+    if (H.strip && H.strip.root.visible) {
+      const hit = raycaster.intersectObjects(H.strip.btns.map(b => b.mesh), false)[0];
+      if (hit) { const b = H.strip.btns.find(q => q.mesh === hit.object); const lc = XR()._st.lastClient; return { kind: 'fn', fn: b.fn, point: hit.point, dist: hit.distance, x: lc.x, y: lc.y }; }
+    }
+    if (!H.fan || !H.fan.visible || H.shown < 0.6) return null;
     const list = H.cards.filter(c => !c.held).map(c => c.mesh);
     const hit = raycaster.intersectObjects(list, false)[0];
     H.cards.forEach(c => { c.hover = !!hit && hit.object === c.mesh; });
@@ -180,6 +209,122 @@
     if (!el || !document.body.contains(el)) return null;
     const r = el.getBoundingClientRect();
     return { kind: 'card', el, point: hit.point, dist: hit.distance, x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  }
+
+  /* ---------- grabbing a card with your right hand ---------- */
+  function grabPoint(p) {
+    const v = H.hands[p.i], J = v && v.hand.joints;
+    if (J && J['index-finger-tip'] && J['index-finger-tip'].visible && J['thumb-tip']) {
+      return J['index-finger-tip'].getWorldPosition(new T.Vector3()).lerp(J['thumb-tip'].getWorldPosition(new T.Vector3()), 0.5);
+    }
+    p.ctrl.updateMatrixWorld();
+    return new T.Vector3().setFromMatrixPosition(p.ctrl.matrixWorld).add(new T.Vector3(0, 0, -0.03).applyQuaternion(p.ctrl.getWorldQuaternion(tmpQ)));
+  }
+  function cardNear(P) {
+    if (!H.fan || !H.fan.visible || H.shown < 0.6) return null;
+    let best = null, bd = 0.06;
+    for (const c of H.cards) {
+      if (c.held || !c.el || !document.body.contains(c.el)) continue;
+      const l = c.mesh.worldToLocal(P.clone());
+      if (Math.abs(l.x) > 0.8 || Math.abs(l.y) > 0.8) continue;
+      const d = c.mesh.getWorldPosition(new T.Vector3()).distanceTo(P);
+      if (d < bd) { bd = d; best = c; }
+    }
+    return best;
+  }
+  function boardUnder(P) {
+    const st = XR()._st;
+    if (!st.placed || st.placing) return null;
+    const l = Sc().board.worldToLocal(P.clone());
+    const above = l.y * XR().scale();
+    if (Math.abs(l.x) > 13.5 || Math.abs(l.z) > 12.75 || above > 0.3 || above < -0.08) return null;
+    const s2 = Sc().boardToScreen(l.x, 0, l.z);
+    return { kind: 'board', x: s2.x, y: s2.y, local: l };
+  }
+  function grabSelect(p, down) {
+    if (down) {
+      if (H.grab || p.handedness === 'left' || !matchOn()) return false;
+      const c = cardNear(grabPoint(p));
+      if (!c) return false;
+      const r = c.el.getBoundingClientRect();
+      const ps = { down: false, downTarget: null };
+      H.grab = { p, ps };
+      p.poking = true;
+      XR()._st.active = -1;
+      const i = H.pokes.findIndex((q, k) => XR()._st.pointers[k] === p); if (i >= 0) H.pokes[i].poking = false;
+      if (MW.Audio) MW.Audio.play('select');
+      XR().pressAt({ kind: 'card', el: c.el, x: r.left + r.width / 2, y: r.top + r.height / 2 }, true, ps);
+      return true;
+    }
+    if (!H.grab || H.grab.p !== p) return false;
+    endGrab();
+    return true;
+  }
+  function updateGrab() {
+    const g = H.grab; if (!g) return;
+    if (!g.p.connected || !XR().active) { endGrab(true); return; }
+    const mode = UI().mode;
+    if (mode.k !== 'place') return;
+    const P = grabPoint(g.p), b = boardUnder(P);
+    if (b) { Sc().setXRRay(boardRay(P)); XR().moveAt(b); }
+  }
+  function endGrab(cancel) {
+    const g = H.grab; if (!g) return;
+    H.grab = null;
+    const mode = UI().mode, P = grabPoint(g.p);
+    const b = !cancel && mode.k === 'place' ? boardUnder(P) : null;
+    if (b) { Sc().setXRRay(boardRay(P)); XR().pressAt(b, false, g.ps); }
+    else {
+      const lc = XR()._st.lastClient;
+      XR().pressAt({ kind: 'none', x: lc.x, y: lc.y }, false, g.ps);
+      if (UI().mode.k === 'place') UI().cancelMode();
+    }
+    g.p.poking = false;
+    XR()._st.active = g.p.i;
+  }
+
+  /* ---------- cards you draw float from your deck into your hand ---------- */
+  function handCounts(st) {
+    const m = new Map(), me = st.sides[0];
+    me.reserve.forEach(id => m.set('creature:' + id, (m.get('creature:' + id) || 0) + 1));
+    me.hand.forEach(id => m.set('spell:' + id, (m.get('spell:' + id) || 0) + 1));
+    return m;
+  }
+  function watchDraws() {
+    const st = UI().Game.st;
+    if (!st || !matchOn()) { H.drawBase = null; H.drawSt = st; return; }
+    const now = handCounts(st);
+    if (H.drawBase && H.drawSt === st) {
+      let k = 0;
+      now.forEach((n, key) => { for (let j = H.drawBase.get(key) || 0; j < n; j++) { const [kind, id] = key.split(':'); setTimeout(() => flyDraw(kind, id), 220 * k++); } });
+    } else if (H.drawSt !== st && st.turn <= 1) {
+      /* a fresh match: your opening hand floats in */
+      let k = 0; now.forEach((n, key) => { for (let j = 0; j < n; j++) { const [kind, id] = key.split(':'); setTimeout(() => flyDraw(kind, id), 600 + 260 * k++); } });
+    }
+    H.drawBase = now; H.drawSt = st;
+  }
+  async function flyDraw(kind, id) {
+    if (!XR().active) return;
+    const t = await faceFor(kind === 'spell' ? 'spell' : 'creature', id);
+    if (!XR().active) return;
+    const card = twoSided(0.09, t.tex, t.aspect);
+    card.traverse(o => { if (o.isMesh) o.renderOrder = 26; });
+    Sc().stage.add(card);
+    const kp = Sc().keeperPos(0);
+    const from = kp ? Sc().board.localToWorld(kp.clone().add(new T.Vector3(0, 4, 0))) : headPos(new T.Vector3()).add(new T.Vector3(0, -0.4, -0.5));
+    if (MW.Audio) MW.Audio.play('draw');
+    card.position.copy(from);
+    const head = headPos(new T.Vector3());
+    await tween(850, k => {
+      const L = handFrame('left');
+      const to = H.fan && H.fan.visible && H.anchor ? H.anchor : L ? L.palm.clone().add(new T.Vector3(0, 0.06, 0)) : head.clone().add(new T.Vector3(0, -0.35, -0.35));
+      const p = from.clone().lerp(to, k); p.y += Math.sin(k * Math.PI) * 0.18;
+      card.position.copy(p);
+      card.lookAt(head);
+      card.rotateZ((1 - k) * 2.2);
+      card.scale.setScalar(k > 0.85 ? 1 - (k - 0.85) / 0.15 * 0.9 : 0.6 + k * 0.4);
+    });
+    Sc().stage.remove(card);
   }
 
   /* ---------- the opponent ---------- */
@@ -335,38 +480,55 @@
     }
   }
 
-  /* ---------- your hands: tracked hands drawn as a skeleton, a simple hand on each controller ---------- */
+  /* ---------- your hands: a cartoon glove and sleeve, on tracked hands and on controllers ---------- */
   const FINGERS = ['thumb', 'index-finger', 'middle-finger', 'ring-finger', 'pinky-finger'];
   const JOINTS = ['wrist'];
   const BONES = [];
   FINGERS.forEach(f => {
     const parts = f === 'thumb' ? ['metacarpal', 'phalanx-proximal', 'phalanx-distal', 'tip'] : ['metacarpal', 'phalanx-proximal', 'phalanx-intermediate', 'phalanx-distal', 'tip'];
     let prev = 'wrist';
-    parts.forEach(pt => { const n = f + '-' + pt; JOINTS.push(n); BONES.push([prev, n]); prev = n; });
+    parts.forEach(pt => { const n = f + '-' + pt; JOINTS.push(n); if (pt !== 'metacarpal' || f === 'thumb') BONES.push([prev, n]); prev = n; });
   });
-  const SKIN = 0xf6dcbc;
+  const GLOVE = 0xf4ecd8, CUFF = 0x3f8a2d, SLEEVE = 0x4f7f3a;
+  const gloveMat = () => new T.MeshStandardMaterial({ color: GLOVE, roughness: 0.75 });
+  function buildSleeve(side) {
+    /* a rolled cuff at the wrist and a sleeve up the forearm; +Y runs from the wrist toward the elbow */
+    const g = new T.Group();
+    const cuff = new T.Mesh(new T.CylinderGeometry(0.036, 0.034, 0.03, 18), new T.MeshStandardMaterial({ color: CUFF, roughness: 0.8 }));
+    cuff.position.y = 0.01;
+    const sleeve = new T.Mesh(new T.CylinderGeometry(0.045, 0.036, 0.22, 18, 1, true), new T.MeshStandardMaterial({ color: SLEEVE, roughness: 0.9, side: T.DoubleSide }));
+    sleeve.position.y = 0.135;
+    g.add(cuff, sleeve);
+    g.userData.side = side;
+    return g;
+  }
   function buildHandViz(hand) {
-    const mat = new T.MeshStandardMaterial({ color: SKIN, roughness: 0.55 });
-    const joints = new T.InstancedMesh(new T.SphereGeometry(1, 10, 8), mat, JOINTS.length);
-    const bones = new T.InstancedMesh(new T.CylinderGeometry(1, 1, 1, 8, 1, true).translate(0, 0.5, 0), mat, BONES.length);
+    const mat = gloveMat();
+    const joints = new T.InstancedMesh(new T.SphereGeometry(1, 12, 9), mat, JOINTS.length);
+    const bones = new T.InstancedMesh(new T.CylinderGeometry(1, 1, 1, 10, 1, true).translate(0, 0.5, 0), mat, BONES.length);
+    const palm = new T.Mesh(new T.SphereGeometry(1, 18, 12), mat);
+    const sleeve = buildSleeve(0);
     joints.frustumCulled = bones.frustumCulled = false;
-    joints.visible = bones.visible = false;
-    Sc().stage.add(joints, bones);
-    return { hand, joints, bones };
+    joints.visible = bones.visible = palm.visible = sleeve.visible = false;
+    Sc().stage.add(joints, bones, palm, sleeve);
+    hand.addEventListener('connected', e => { hand.userData.handedness = e.data && e.data.handedness; });
+    return { hand, joints, bones, palm, sleeve };
   }
   const _m = new T.Matrix4(), _p = new T.Vector3(), _q = new T.Quaternion(), _s = new T.Vector3(), _a = new T.Vector3(), _b = new T.Vector3(), _up = new T.Vector3(0, 1, 0);
+  const jp = (J, n) => J[n].getWorldPosition(new T.Vector3());
   function updateHandViz(v) {
     const J = v.hand.joints || {};
     const wrist = J.wrist;
-    const on = !!(wrist && wrist.visible);
-    v.joints.visible = v.bones.visible = on;
+    const on = !!(wrist && wrist.visible && J['middle-finger-metacarpal'] && J['index-finger-metacarpal'] && J['pinky-finger-metacarpal']);
+    v.joints.visible = v.bones.visible = v.palm.visible = v.sleeve.visible = on;
     if (!on) return;
     v.hand.updateMatrixWorld(true);
+    /* puffy glove fingers: fat joints and fingers */
     JOINTS.forEach((n, i) => {
       const j = J[n];
-      if (!j) { _m.makeScale(0, 0, 0); v.joints.setMatrixAt(i, _m); return; }
+      if (!j || n === 'wrist' || (n.endsWith('metacarpal') && n !== 'thumb-metacarpal')) { _m.makeScale(0, 0, 0); v.joints.setMatrixAt(i, _m); return; }
       j.getWorldPosition(_p);
-      const r = Math.max(0.004, (j.jointRadius || 0.008) * (n.endsWith('tip') ? 0.9 : 1));
+      const r = Math.max(0.0075, (j.jointRadius || 0.008) * 1.3);
       _m.compose(_p, _q.identity(), _s.set(r, r, r));
       v.joints.setMatrixAt(i, _m);
     });
@@ -375,30 +537,116 @@
       if (!ja || !jb) { _m.makeScale(0, 0, 0); v.bones.setMatrixAt(i, _m); return; }
       ja.getWorldPosition(_a); jb.getWorldPosition(_b);
       const d = _b.clone().sub(_a), len = d.length();
-      const r = Math.max(0.0035, Math.min(ja.jointRadius || 0.008, jb.jointRadius || 0.008) * 0.85);
+      const r = Math.max(0.0072, Math.min(ja.jointRadius || 0.008, jb.jointRadius || 0.008) * 1.3);
       _q.setFromUnitVectors(_up, d.normalize());
       _m.compose(_a, _q, _s.set(r, len, r));
       v.bones.setMatrixAt(i, _m);
     });
     v.joints.instanceMatrix.needsUpdate = true; v.bones.instanceMatrix.needsUpdate = true;
+    /* the palm: a soft pad from the wrist to the knuckles */
+    const w = jp(J, 'wrist'), mid = jp(J, 'middle-finger-metacarpal'), idx = jp(J, 'index-finger-metacarpal'), pky = jp(J, 'pinky-finger-metacarpal');
+    const knuck = J['middle-finger-phalanx-proximal'] ? jp(J, 'middle-finger-phalanx-proximal') : mid;
+    const z = knuck.clone().sub(w), len = z.length(); z.normalize();
+    const x = idx.clone().sub(pky); const width = x.length(); x.addScaledVector(z, -x.dot(z)).normalize();
+    const y = new T.Vector3().crossVectors(z, x);
+    _m.makeBasis(x, y, z);
+    v.palm.quaternion.setFromRotationMatrix(_m);
+    v.palm.position.copy(w).lerp(knuck, 0.5);
+    v.palm.scale.set(Math.max(0.03, width * 0.5 + 0.014), 0.017, len * 0.55);
+    /* sleeve from the wrist up the forearm */
+    v.sleeve.position.copy(w);
+    v.sleeve.quaternion.setFromUnitVectors(_up, z.clone().negate());
   }
-  /* a cartoon glove holding the controller, so you can see your hands with controllers too */
+  /* a cartoon glove holding the controller, with a sleeve, so you see your hands with controllers too */
   function buildMitt(side) {
     const g = new T.Group();
-    const mat = new T.MeshStandardMaterial({ color: SKIN, roughness: 0.55 });
+    const mat = gloveMat();
     const palm = new T.Mesh(new T.SphereGeometry(1, 16, 12), mat);
-    palm.scale.set(0.034, 0.018, 0.045); palm.position.set(side * 0.022, 0.0, 0.05); palm.rotation.z = side * 0.9;
+    palm.scale.set(0.036, 0.02, 0.047); palm.position.set(side * 0.022, 0.0, 0.05); palm.rotation.z = side * 0.9;
     g.add(palm);
     for (let i = 0; i < 4; i++) {
-      const f = new T.Mesh(new T.CylinderGeometry(0.0085, 0.0085, 0.045, 8), mat);
+      const f = new T.Mesh(new T.CylinderGeometry(0.0105, 0.0105, 0.047, 10), mat);
       f.position.set(-side * 0.008, -0.022, 0.03 + i * 0.019); f.rotation.set(0, 0, side * 0.5);
       g.add(f);
     }
-    const thumb = new T.Mesh(new T.CylinderGeometry(0.009, 0.008, 0.045, 8), mat);
+    const thumb = new T.Mesh(new T.CylinderGeometry(0.011, 0.01, 0.047, 10), mat);
     thumb.position.set(side * 0.004, 0.022, 0.025); thumb.rotation.set(-1.1, 0, side * 0.2);
     g.add(thumb);
+    /* the sleeve runs back from the grip toward your elbow (+Z in grip space) */
+    const sl = buildSleeve(side); sl.rotation.x = Math.PI / 2; sl.position.set(side * 0.012, 0.005, 0.1);
+    g.add(sl);
     g.visible = false;
     return g;
+  }
+
+  /* ---------- the strip on your left sleeve: creatures, spells, hide cards, pause ---------- */
+  const STRIP = [
+    { key: 'creatures', label: 'Creatures' }, { key: 'spells', label: 'Spells' }, { key: 'hide', label: 'Hide' }, { key: 'pause', label: 'Pause' }
+  ];
+  function drawIcon(g, key) {
+    g.save(); g.translate(64, 52); g.fillStyle = '#2f2a1f'; g.strokeStyle = '#2f2a1f'; g.lineWidth = 7; g.lineCap = 'round';
+    if (key === 'creatures') { /* a paw */
+      g.beginPath(); g.ellipse(0, 10, 18, 15, 0, 0, Math.PI * 2); g.fill();
+      [[-20, -12], [-7, -22], [7, -22], [20, -12]].forEach(([x, y]) => { g.beginPath(); g.ellipse(x, y, 7, 9, 0, 0, Math.PI * 2); g.fill(); });
+    } else if (key === 'spells') { /* a star */
+      g.beginPath(); for (let i = 0; i < 10; i++) { const r = i % 2 ? 11 : 27, a = -Math.PI / 2 + i * Math.PI / 5; g.lineTo(Math.cos(a) * r, Math.sin(a) * r); } g.closePath(); g.fill();
+    } else if (key === 'hide') { /* an eye with a line through it */
+      g.beginPath(); g.moveTo(-28, 0); g.quadraticCurveTo(0, -26, 28, 0); g.quadraticCurveTo(0, 26, -28, 0); g.stroke();
+      g.beginPath(); g.arc(0, 0, 8, 0, Math.PI * 2); g.fill();
+      g.beginPath(); g.moveTo(-24, 22); g.lineTo(24, -22); g.stroke();
+    } else { /* pause */
+      g.fillRect(-16, -22, 11, 44); g.fillRect(5, -22, 11, 44);
+    }
+    g.restore();
+  }
+  function stripTex(b, on) {
+    const c = b.canvas, g = c.getContext('2d');
+    g.clearRect(0, 0, 128, 128);
+    g.fillStyle = on ? '#fac775' : '#fbf6e9'; g.strokeStyle = on ? '#b4761f' : '#2f2a1f'; g.lineWidth = 6;
+    g.beginPath(); g.arc(64, 64, 58, 0, Math.PI * 2); g.fill(); g.stroke();
+    drawIcon(g, b.key);
+    g.fillStyle = '#2f2a1f'; g.font = '600 19px system-ui, sans-serif'; g.textAlign = 'center'; g.fillText(b.label, 64, 104);
+    b.tex.needsUpdate = true; b.on = on;
+  }
+  function buildStrip() {
+    const root = new T.Group(); root.visible = false;
+    const btns = STRIP.map((d, i) => {
+      const canvas = document.createElement('canvas'); canvas.width = canvas.height = 128;
+      const tex = new T.CanvasTexture(canvas);
+      const mesh = new T.Mesh(new T.PlaneGeometry(0.03, 0.03), new T.MeshBasicMaterial({ map: tex, transparent: true, alphaTest: 0.05, side: T.DoubleSide }));
+      mesh.position.x = (i - 1.5) * 0.034; mesh.renderOrder = 27;
+      root.add(mesh);
+      const b = Object.assign({}, d, { canvas, tex, mesh, on: null });
+      b.fn = () => pressStrip(d.key);
+      return b;
+    });
+    Sc().stage.add(root);
+    H.strip = { root, btns };
+  }
+  function pressStrip(key) {
+    if (MW.Audio) MW.Audio.play('click');
+    if (key === 'pause') { if (UI().openPause) UI().openPause(); return; }
+    H.tab = key;
+    if (key !== 'hide' && UI().mode.k === 'place') UI().cancelMode();
+  }
+  function updateStrip() {
+    const s = H.strip;
+    const L = matchOn() || (UI().Game.st && UI().Game.paused) ? handFrame('left') : null;
+    s.root.visible = !!L && !XR()._st.setup;
+    if (!s.root.visible) return;
+    const head = headPos(new T.Vector3());
+    /* along the top of the forearm, a little up the sleeve, turned to face you */
+    const base = L.wrist.clone().addScaledVector(L.fwd, -0.075);
+    const zf = head.clone().sub(base).normalize();
+    base.addScaledVector(zf, 0.05);
+    let x = L.fwd.clone().negate(); x.addScaledVector(zf, -x.dot(zf));
+    if (x.lengthSq() < 1e-4) x.set(1, 0, 0); x.normalize();
+    let y = new T.Vector3().crossVectors(zf, x);
+    if (y.y < 0) { x.negate(); y.negate(); }
+    _m.makeBasis(x, y, zf);
+    s.root.position.copy(base);
+    s.root.quaternion.setFromRotationMatrix(_m);
+    s.btns.forEach(b => { const on = b.key === H.tab; if (on !== b.on) stripTex(b, on); });
   }
 
   /* ---------- tapping with your index finger ---------- */
@@ -410,7 +658,16 @@
     if (Math.abs(l.x) <= 0.5 && Math.abs(l.y) <= 0.5 && z < slack && z > -0.03) return { u: l.x + 0.5, v: l.y + 0.5, z };
     return null;
   }
+  function touchButton(mesh, P, slack) {
+    const l = mesh.worldToLocal(P.clone());
+    return Math.abs(l.x) <= 0.017 && Math.abs(l.y) <= 0.017 && l.z < slack && l.z > -0.03;
+  }
   function pokeTarget(P, isFanHand, slack) {
+    const lc = XR()._st.lastClient;
+    /* buttons on your left sleeve */
+    if (!isFanHand && H.strip && H.strip.root.visible) {
+      for (const b of H.strip.btns) if (touchButton(b.mesh, P, slack)) return { kind: 'fn', fn: b.fn, key: b.key, x: lc.x, y: lc.y };
+    }
     /* cards in your other hand */
     if (!isFanHand && H.fan && H.fan.visible && H.shown > 0.6) {
       for (const c of H.cards) {
@@ -440,19 +697,22 @@
   function updatePoke(i, ps) {
     const v = H.hands[i];
     const st = XR()._st, ptr = st.pointers[i];
+    if (H.grab && H.grab.p === ptr) { ps.poking = false; ps.pending = null; if (ptr) ptr.poking = true; return; }
     const tip = v && v.hand.joints && v.hand.joints['index-finger-tip'];
     if (!tip || !tip.visible || !st.session) { if (ps.poking) endPoke(ps, null, ptr); return; }
     const P = tip.getWorldPosition(new T.Vector3());
-    const isFan = ptr && ptr.handedness === 'left';
+    const isFan = handSide(i) === 'left';
     if (!ps.poking) {
       const a = pokeTarget(P, isFan, TOUCH);
       if (!a) return;
       ps.poking = true; ps.kind = a.kind; if (ptr) ptr.poking = true;
       st.active = -1; /* stop that hand's ray from also moving the pointer */
-      if (a.kind === 'board') Sc().setXRRay(boardRay(P));
-      if (MW.Audio) MW.Audio.play('click');
-      XR().pressAt(a, true, ps);
       ps.last = a;
+      /* a card in your hand is picked on release, so reaching in to pinch-grab it doesn't also tap it */
+      if (a.kind === 'card') { ps.pending = a; return; }
+      if (a.kind === 'board') Sc().setXRRay(boardRay(P));
+      if (MW.Audio && a.kind !== 'fn') MW.Audio.play('click');
+      XR().pressAt(a, true, ps);
       return;
     }
     const a = pokeTarget(P, isFan, RELEASE);
@@ -464,6 +724,12 @@
     endPoke(ps, a || ps.last, ptr, P);
   }
   function endPoke(ps, a, ptr, P) {
+    if (ps.pending) {
+      const c = ps.pending; ps.pending = null;
+      if (a && a.kind === 'card' && document.body.contains(c.el)) { if (MW.Audio) MW.Audio.play('click'); XR().pressAt(c, true, ps); XR().pressAt(c, false, ps); }
+      ps.poking = false; ps.last = null; if (ptr) ptr.poking = false;
+      return;
+    }
     if (a) {
       if (a.kind === 'board' && P) Sc().setXRRay(boardRay(P));
       XR().pressAt(a, false, ps);
@@ -477,21 +743,26 @@
     const dt = Math.min(0.1, (now - (lastT || now)) / 1000); lastT = now;
     runTweens();
     if (!H.fan) buildFan();
+    if (!H.strip) buildStrip();
     if (!H.av) { buildAvatar(); layoutAvatar(); }
+    for (let i = 0; i < H.hands.length; i++) updateHandViz(H.hands[i]);
     updateFan(dt);
+    updateStrip();
+    updateGrab();
+    watchDraws();
     updateAvatar(now);
-    for (let i = 0; i < H.hands.length; i++) { updateHandViz(H.hands[i]); updatePoke(i, H.pokes[i]); if (!XR().active || XR()._st.ending) return; /* a tap on Exit just ended the session */ }
+    for (let i = 0; i < H.hands.length; i++) { updatePoke(i, H.pokes[i]); if (!XR().active || XR()._st.ending) return; /* a tap on Exit just ended the session */ }
     /* gloves on controllers; hidden when your real hands are tracked */
     const st = XR()._st;
     H.mitts.forEach((m, i) => { const p = st.pointers[i]; m.visible = !!(p && p.connected && !p.hand && H.grips[i].userData.connected); });
     if (!tipped && matchOn() && UI().Game.st.active === 0) {
       tipped = true;
-      setTimeout(() => { if (XR().active && UI().toast) UI().toast('Turn your left hand so its side faces you to see your cards. Point at one with your right hand and drag it onto the board.'); }, 2500);
+      setTimeout(() => { if (XR().active && UI().toast) UI().toast('Your cards float over your left hand. Grab one with your right hand and let go over a lane. The icons on your left sleeve switch between creatures and spells, hide the cards, or pause.'); }, 2500);
     }
   }
   function beforeSession() {
     const r = Sc().renderer;
-    H.hands = []; H.pokes = []; H.mitts = [];
+    H.hands = []; H.pokes = []; H.mitts = []; H.grips = [];
     for (let i = 0; i < 2; i++) {
       const hand = r.xr.getHand(i);
       Sc().stage.add(hand);
@@ -512,11 +783,13 @@
     x.hooks.beforeSession.push(beforeSession);
     x.hooks.frame.push(frame);
     x.hooks.aim.push(aimCards);
-    x.hooks.start.push(() => { if (H.av) layoutAvatar(); tipped = false; });
-    x.hooks.stop.push(() => { H.tw.forEach(t => t.res()); H.tw = []; if (H.fan) H.fan.visible = false; if (H.av) { H.av.root.visible = false; H.av.busy = false; } });
+    x.hooks.select.push(grabSelect);
+    x.hooks.squeeze.push(grabSelect);
+    x.hooks.start.push((mode, relayout) => { if (H.av) layoutAvatar(); if (!relayout) { tipped = false; H.drawBase = null; H.drawSt = UI().Game.st; } });
+    x.hooks.stop.push(() => { H.grab = null; H.tw.forEach(t => t.res()); H.tw = []; if (H.fan) H.fan.visible = false; if (H.strip) H.strip.root.visible = false; if (H.av) { H.av.root.visible = false; H.av.busy = false; } });
     const hook = () => { if (UI()) UI().aiHook = (a, st) => act(a, st); else setTimeout(hook, 50); };
     hook();
   }
-  MW.XRHands = { _H: H, act };
+  MW.XRHands = { _H: H, act, pressStrip };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else setTimeout(init, 0);
 })(typeof window !== 'undefined' ? window : globalThis);

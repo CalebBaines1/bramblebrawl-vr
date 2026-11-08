@@ -23,12 +23,18 @@ original name, `bramblebrawl-vr`, so the GitHub Pages link stays the same.
 
 - **Quest:** open https://calebbaines1.github.io/bramblebrawl-vr/ in the Meta Quest Browser and choose
   **Play on your table** (mixed reality, Quest 3/3S) or **Play in VR**.
-  - Look at your table and pull the trigger (or pinch) to put the board down. Squeeze the grip, or press
-    **Move board**, to move it later.
-  - Turn your left hand so its side faces you and your cards fan out above it. Point at one with your right
-    hand, pull the trigger (or pinch), and drag it onto a lane.
-  - With hand tracking you see your hands, and you can tap menus, cards and the board with your index finger
-    instead of pinching. With controllers you see a simple glove on each one.
+  - Mixed reality starts with **table setup**: look at your table and pull the trigger (or pinch) to put the
+    board down, then use the setup card to make it smaller or bigger, lower or higher, or turn it, and press
+    **Done**. Squeeze the grip, press **Board setup**, or pick it from the pause menu to redo it.
+  - **Play on your table** and **Play in VR** also work from inside the headset: they switch between mixed
+    reality and the meadow without leaving (on headsets with passthrough).
+  - Your cards float over your left hand. Grab one with your right hand (pinch, trigger or grip) and let go
+    over a lane, or tap it and then tap the lane. Hold a grabbed spell to crush it.
+  - The strip on your left sleeve has four icons: **Creatures** (creatures and structures), **Spells**,
+    **Hide** (put the cards away) and **Pause** (resume, board setup, quit to the main menu, or exit VR).
+  - Cards you draw float from your Keeper into your hand.
+  - Your hands show as cartoon gloves with sleeves, with hand tracking or controllers. With hand tracking
+    you can tap menus, cards, sleeve icons and the board with your index finger.
   - **Table ▲ / ▼** on the HUD (or the main menu) raises or lowers the table 3 cm a step; it's remembered.
     **Exit VR** leaves the headset view.
   - The opponent sits across the table and plays its cards the same way, so you can see what it's doing.

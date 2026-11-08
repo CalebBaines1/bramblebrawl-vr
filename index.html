@@ -92,6 +92,13 @@ h1, h2, h3 { font-family: var(--ff-display); font-weight: 600; margin: 0; text-w
 .hud-top > * { pointer-events: auto; }
 body:not(.in-xr) .xr-only { display: none !important; }
 .xr-row { display: flex; gap: 8px; } .xr-row button { flex: 1; }
+#xr-setup { position: fixed; left: 12px; top: 12px; z-index: 40; }
+#xr-setup[hidden] { display: none; }
+#xr-setup .setup-card { background: var(--paper); border: 3px solid var(--line); border-radius: 18px; padding: 14px 16px; width: 360px; box-shadow: var(--shadow); }
+#xr-setup h3 { margin: 0 0 4px; font-size: 1.3rem; }
+#xr-setup p { margin: 0 0 10px; font-size: .95rem; color: var(--ink-2, #555); }
+#xr-setup .xs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+#xr-setup button { padding: 10px; font-size: 1rem; }
 .chip { background: var(--paper); border: 2.5px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); padding: 8px 12px; }
 .opp { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; max-width: min(520px, 60vw); }
 .opp .who { font: 600 1rem var(--ff-display); color: var(--foe); }
