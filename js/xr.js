@@ -258,10 +258,16 @@
   }
   function onSelect(p, down) {
     if (!st.session) return;
+    if (p.poking) return; /* a fingertip tap is already pressing for this hand */
     st.active = p.i;
     if (st.placing) { if (!down) confirmPlacement(); return; }
     const a = aim(p);
     Sc().setXRRay(p.ray.clone());
+    pressAt(a, down, p);
+  }
+  /* press or release at an aim result: sends the pointer events (and a click on buttons) the page expects.
+     ps keeps the press state for one pointer or fingertip. */
+  function pressAt(a, down, p) {
     const target = targetFor(a);
     st.lastClient = { x: a.x, y: a.y };
     if (down) {
@@ -329,11 +335,28 @@
     if (st.reticle) st.reticle.visible = true;
     if (MW.UI && MW.UI.toast) MW.UI.toast(st.hitSource ? 'Look at your table and pull the trigger (or pinch) to put the board there.' : 'Pull the trigger (or pinch) to put the board in front of you.');
   }
+  /* table height: a per-mode offset you can nudge up or down, remembered between visits */
+  function loadOffsets() { try { return JSON.parse(localStorage.getItem('bb.tableOffset')) || { ar: 0, vr: 0 }; } catch (e) { return { ar: 0, vr: 0 }; } }
+  st.offsets = loadOffsets();
+  function applyBoard(pos, yaw) {
+    const p = pos.clone(); p.y += st.offsets[st.mode] || 0;
+    Sc().placeBoard(p, yaw, SCALE[st.mode]);
+    st.rig.position.copy(p); st.rig.rotation.set(0, yaw, 0);
+    if (st.reticle) st.reticle.position.copy(p);
+  }
+  function nudgeTable(dy) {
+    if (!st.session) return;
+    const m = st.mode, lim = m === 'vr' ? [-0.4, 0.5] : [-0.25, 0.25];
+    st.offsets[m] = Math.max(lim[0], Math.min(lim[1], Math.round(((st.offsets[m] || 0) + dy) * 100) / 100));
+    try { localStorage.setItem('bb.tableOffset', JSON.stringify(st.offsets)); } catch (e) { /* private mode */ }
+    applyBoard(st.boardPos, st.boardYaw);
+    st.dirty = true;
+    if (MW.UI && MW.UI.toast) MW.UI.toast('Table height ' + (st.offsets[m] >= 0 ? '+' : '') + Math.round(st.offsets[m] * 100) + ' cm');
+  }
   function confirmPlacement() {
     st.placing = false; st.placed = true;
     st.reticle.visible = false;
-    Sc().placeBoard(st.boardPos, st.boardYaw, SCALE[st.mode]);
-    st.rig.position.copy(st.boardPos); st.rig.rotation.set(0, st.boardYaw, 0);
+    applyBoard(st.boardPos, st.boardYaw);
     st.dirty = true;
     if (MW.Audio) MW.Audio.play('thud');
   }
@@ -356,10 +379,9 @@
     const h = headPose();
     yaw = Math.atan2(h.pos.x - pos.x, h.pos.z - pos.z);
     st.boardPos.copy(pos); st.boardYaw = yaw;
-    st.reticle.position.copy(pos); st.reticle.rotation.set(0, yaw, 0);
+    st.reticle.rotation.set(0, yaw, 0);
     /* preview: the board follows the reticle while you choose */
-    Sc().placeBoard(pos, yaw, SCALE[st.mode]);
-    st.rig.position.copy(pos); st.rig.rotation.set(0, yaw, 0);
+    applyBoard(pos, yaw);
   }
 
   /* ---------- session ---------- */
@@ -370,7 +392,7 @@
     updatePlacement(frame);
     updatePointers();
     drawPanels(now);
-    hooks.frame.forEach(f => { try { f(now, frame); } catch (e) { console.error(e); } });
+    for (const f of hooks.frame) { if (!st.session || st.ending) break; try { f(now, frame); } catch (e) { console.error(e); } }
     /* the tray is redundant while your hand of cards is up */
     st.panels.forEach(p => { if (p.def.key === 'tray') p.holder.visible = !st.hideTray; });
     st.perf.frames++; st.perf.frameMs += performance.now() - t0;
@@ -418,8 +440,7 @@
     if (layer && 'fixedFoveation' in layer) try { layer.fixedFoveation = 1; } catch (e) { /* not supported */ }
     const d = defaultSpot();
     st.boardPos.copy(d.pos); st.boardYaw = d.yaw;
-    Sc().placeBoard(d.pos, d.yaw, SCALE[mode]);
-    st.rig.position.copy(d.pos); st.rig.rotation.set(0, d.yaw, 0);
+    applyBoard(d.pos, d.yaw);
     st.dirty = true;
     /* in VR there's no table to find, so the board starts where it is; in MR you choose the spot */
     if (mode === 'ar') startPlacing(); else confirmPlacement();
@@ -429,7 +450,7 @@
   }
   function stop() {
     if (!st.session) return;
-    st.session = null; st.placing = false;
+    st.session = null; st.placing = false; st.ending = false;
     if (st.hitSource && st.hitSource.cancel) try { st.hitSource.cancel(); } catch (e) { /* already gone */ }
     st.hitSource = null;
     if (st.rig) st.rig.visible = false;
@@ -439,7 +460,7 @@
     unpatchRaf();
     document.body.classList.remove('in-xr');
   }
-  function end() { if (st.session) st.session.end(); }
+  function end() { if (st.session && !st.ending) { st.ending = true; Promise.resolve(st.session.end()).catch(() => {}); } }
 
   /* ---------- buttons ---------- */
   async function supported(mode) {
@@ -463,6 +484,21 @@
       if (ar) menu.insertBefore(mk('Play on your table', 'mixed reality', () => start('ar'), true), first);
       if (ar && first && first.classList.contains('primary')) first.classList.remove('primary');
     }
+    /* headset-only controls: leave the headset, raise or lower the table */
+    const xrBtn = (id, label, title, fn) => { const b = document.createElement('button'); b.id = id; b.className = 'xr-only'; b.textContent = label; b.title = title; b.addEventListener('click', () => { if (MW.Audio) MW.Audio.play('click'); fn(); }); return b; };
+    const tools0 = $('#hud .tools');
+    if (tools0) {
+      tools0.appendChild(xrBtn('t-down', 'Table \u25bc', 'Lower the table', () => nudgeTable(-0.03)));
+      tools0.appendChild(xrBtn('t-up', 'Table \u25b2', 'Raise the table', () => nudgeTable(0.03)));
+      tools0.appendChild(xrBtn('t-exit', 'Exit VR', 'Leave the headset view', end));
+    }
+    if (menu) {
+      const row = document.createElement('div'); row.className = 'xr-only xr-row';
+      row.appendChild(xrBtn('m-down', 'Table \u25bc', 'Lower the table', () => nudgeTable(-0.03)));
+      row.appendChild(xrBtn('m-up', 'Table \u25b2', 'Raise the table', () => nudgeTable(0.03)));
+      menu.appendChild(row);
+      menu.appendChild(xrBtn('m-exit', 'Exit VR', 'Leave the headset view', end));
+    }
     const tools = $('#hud .tools');
     if (tools) {
       const b = document.createElement('button');
@@ -480,6 +516,6 @@
     setupButtons();
   }
 
-  MW.XR = { init, start, end, startPlacing, get active() { return !!st.session; }, get mode() { return st.mode; }, support: { ar: false, vr: false }, _st: st, _drawEl: drawEl, hooks, scale: () => SCALE[st.mode] || SCALE.ar };
+  MW.XR = { init, start, end, startPlacing, get active() { return !!st.session; }, get mode() { return st.mode; }, support: { ar: false, vr: false }, _st: st, _drawEl: drawEl, hooks, pressAt, nudgeTable, moveAt: a => { st.lastClient = { x: a.x, y: a.y }; fire('pointermove', targetFor(a), a.x, a.y, { buttons: 1 }); }, scale: () => SCALE[st.mode] || SCALE.ar };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else setTimeout(init, 0);
 })(typeof window !== 'undefined' ? window : globalThis);

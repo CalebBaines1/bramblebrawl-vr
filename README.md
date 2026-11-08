@@ -27,6 +27,10 @@ original name, `bramblebrawl-vr`, so the GitHub Pages link stays the same.
     **Move board**, to move it later.
   - Turn your left hand so its side faces you and your cards fan out above it. Point at one with your right
     hand, pull the trigger (or pinch), and drag it onto a lane.
+  - With hand tracking you see your hands, and you can tap menus, cards and the board with your index finger
+    instead of pinching. With controllers you see a simple glove on each one.
+  - **Table ▲ / ▼** on the HUD (or the main menu) raises or lowers the table 3 cm a step; it's remembered.
+    **Exit VR** leaves the headset view.
   - The opponent sits across the table and plays its cards the same way, so you can see what it's doing.
   - Point and pull the trigger (or pinch) exactly where you would click with a mouse: pick a card from the tray,
     drag it onto a lane, drag a creature onto an enemy, hold to crush a spell, and so on.

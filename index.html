@@ -90,6 +90,8 @@ h1, h2, h3 { font-family: var(--ff-display); font-weight: 600; margin: 0; text-w
 #hud > * { pointer-events: auto; }
 .hud-top { position: absolute; top: max(12px, env(safe-area-inset-top, 0px)); left: max(12px, env(safe-area-inset-left, 0px)); right: max(12px, env(safe-area-inset-right, 0px)); display: flex; align-items: flex-start; gap: 10px; pointer-events: none; }
 .hud-top > * { pointer-events: auto; }
+body:not(.in-xr) .xr-only { display: none !important; }
+.xr-row { display: flex; gap: 8px; } .xr-row button { flex: 1; }
 .chip { background: var(--paper); border: 2.5px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); padding: 8px 12px; }
 .opp { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; max-width: min(520px, 60vw); }
 .opp .who { font: 600 1rem var(--ff-display); color: var(--foe); }

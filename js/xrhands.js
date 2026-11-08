@@ -9,7 +9,7 @@
   const MW = root.MW = root.MW || {};
   const T = root.THREE;
   const XR = () => MW.XR, Sc = () => MW.Scene, R = () => MW.Rules, UI = () => MW.UI;
-  const H = { grips: [], fan: null, cards: [], sig: '', shown: 0, show: false, av: null, tw: [], off: null, texCache: new Map() };
+  const H = { hands: [], pokes: [], mitts: [], grips: [], fan: null, cards: [], sig: '', shown: 0, show: false, av: null, tw: [], off: null, texCache: new Map() };
 
   /* ---------- little tween system driven by the XR frame ---------- */
   const ease = k => (k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2);
@@ -335,6 +335,142 @@
     }
   }
 
+  /* ---------- your hands: tracked hands drawn as a skeleton, a simple hand on each controller ---------- */
+  const FINGERS = ['thumb', 'index-finger', 'middle-finger', 'ring-finger', 'pinky-finger'];
+  const JOINTS = ['wrist'];
+  const BONES = [];
+  FINGERS.forEach(f => {
+    const parts = f === 'thumb' ? ['metacarpal', 'phalanx-proximal', 'phalanx-distal', 'tip'] : ['metacarpal', 'phalanx-proximal', 'phalanx-intermediate', 'phalanx-distal', 'tip'];
+    let prev = 'wrist';
+    parts.forEach(pt => { const n = f + '-' + pt; JOINTS.push(n); BONES.push([prev, n]); prev = n; });
+  });
+  const SKIN = 0xf6dcbc;
+  function buildHandViz(hand) {
+    const mat = new T.MeshStandardMaterial({ color: SKIN, roughness: 0.55 });
+    const joints = new T.InstancedMesh(new T.SphereGeometry(1, 10, 8), mat, JOINTS.length);
+    const bones = new T.InstancedMesh(new T.CylinderGeometry(1, 1, 1, 8, 1, true).translate(0, 0.5, 0), mat, BONES.length);
+    joints.frustumCulled = bones.frustumCulled = false;
+    joints.visible = bones.visible = false;
+    Sc().stage.add(joints, bones);
+    return { hand, joints, bones };
+  }
+  const _m = new T.Matrix4(), _p = new T.Vector3(), _q = new T.Quaternion(), _s = new T.Vector3(), _a = new T.Vector3(), _b = new T.Vector3(), _up = new T.Vector3(0, 1, 0);
+  function updateHandViz(v) {
+    const J = v.hand.joints || {};
+    const wrist = J.wrist;
+    const on = !!(wrist && wrist.visible);
+    v.joints.visible = v.bones.visible = on;
+    if (!on) return;
+    v.hand.updateMatrixWorld(true);
+    JOINTS.forEach((n, i) => {
+      const j = J[n];
+      if (!j) { _m.makeScale(0, 0, 0); v.joints.setMatrixAt(i, _m); return; }
+      j.getWorldPosition(_p);
+      const r = Math.max(0.004, (j.jointRadius || 0.008) * (n.endsWith('tip') ? 0.9 : 1));
+      _m.compose(_p, _q.identity(), _s.set(r, r, r));
+      v.joints.setMatrixAt(i, _m);
+    });
+    BONES.forEach(([a, b], i) => {
+      const ja = J[a], jb = J[b];
+      if (!ja || !jb) { _m.makeScale(0, 0, 0); v.bones.setMatrixAt(i, _m); return; }
+      ja.getWorldPosition(_a); jb.getWorldPosition(_b);
+      const d = _b.clone().sub(_a), len = d.length();
+      const r = Math.max(0.0035, Math.min(ja.jointRadius || 0.008, jb.jointRadius || 0.008) * 0.85);
+      _q.setFromUnitVectors(_up, d.normalize());
+      _m.compose(_a, _q, _s.set(r, len, r));
+      v.bones.setMatrixAt(i, _m);
+    });
+    v.joints.instanceMatrix.needsUpdate = true; v.bones.instanceMatrix.needsUpdate = true;
+  }
+  /* a cartoon glove holding the controller, so you can see your hands with controllers too */
+  function buildMitt(side) {
+    const g = new T.Group();
+    const mat = new T.MeshStandardMaterial({ color: SKIN, roughness: 0.55 });
+    const palm = new T.Mesh(new T.SphereGeometry(1, 16, 12), mat);
+    palm.scale.set(0.034, 0.018, 0.045); palm.position.set(side * 0.022, 0.0, 0.05); palm.rotation.z = side * 0.9;
+    g.add(palm);
+    for (let i = 0; i < 4; i++) {
+      const f = new T.Mesh(new T.CylinderGeometry(0.0085, 0.0085, 0.045, 8), mat);
+      f.position.set(-side * 0.008, -0.022, 0.03 + i * 0.019); f.rotation.set(0, 0, side * 0.5);
+      g.add(f);
+    }
+    const thumb = new T.Mesh(new T.CylinderGeometry(0.009, 0.008, 0.045, 8), mat);
+    thumb.position.set(side * 0.004, 0.022, 0.025); thumb.rotation.set(-1.1, 0, side * 0.2);
+    g.add(thumb);
+    g.visible = false;
+    return g;
+  }
+
+  /* ---------- tapping with your index finger ---------- */
+  const TOUCH = 0.008, RELEASE = 0.02;
+  function touchPlane(mesh, P, slack) {
+    const l = mesh.worldToLocal(P.clone());
+    const ws = mesh.getWorldScale(new T.Vector3());
+    const z = l.z * ws.z;
+    if (Math.abs(l.x) <= 0.5 && Math.abs(l.y) <= 0.5 && z < slack && z > -0.03) return { u: l.x + 0.5, v: l.y + 0.5, z };
+    return null;
+  }
+  function pokeTarget(P, isFanHand, slack) {
+    /* cards in your other hand */
+    if (!isFanHand && H.fan && H.fan.visible && H.shown > 0.6) {
+      for (const c of H.cards) {
+        if (c.held) continue;
+        const t = touchPlane(c.mesh, P, slack);
+        if (t && c.el && document.body.contains(c.el)) { const r = c.el.getBoundingClientRect(); return { kind: 'card', el: c.el, x: r.left + r.width / 2, y: r.top + r.height / 2 }; }
+      }
+    }
+    /* floating menus and HUD */
+    const st = XR()._st;
+    for (const q of st.panels) {
+      if (!q.mesh.visible || !q.holder.visible || !q.rect) continue;
+      const t = touchPlane(q.mesh, P, slack);
+      if (t) return { kind: 'panel', panel: q, x: q.rect.left + t.u * q.rect.width, y: q.rect.top + (1 - t.v) * q.rect.height };
+    }
+    /* the board itself */
+    if (st.placed && !st.placing) {
+      const l = Sc().board.worldToLocal(P.clone());
+      if (Math.abs(l.x) < 13.5 && Math.abs(l.z) < 12.75 && l.y * XR().scale() < slack && l.y * XR().scale() > -0.05) {
+        const s2 = Sc().boardToScreen(l.x, 0, l.z);
+        return { kind: 'board', x: s2.x, y: s2.y, local: l, world: P.clone() };
+      }
+    }
+    return null;
+  }
+  function boardRay(P) { return new T.Ray(P.clone().add(new T.Vector3(0, 0.15, 0)), new T.Vector3(0, -1, 0)); }
+  function updatePoke(i, ps) {
+    const v = H.hands[i];
+    const st = XR()._st, ptr = st.pointers[i];
+    const tip = v && v.hand.joints && v.hand.joints['index-finger-tip'];
+    if (!tip || !tip.visible || !st.session) { if (ps.poking) endPoke(ps, null, ptr); return; }
+    const P = tip.getWorldPosition(new T.Vector3());
+    const isFan = ptr && ptr.handedness === 'left';
+    if (!ps.poking) {
+      const a = pokeTarget(P, isFan, TOUCH);
+      if (!a) return;
+      ps.poking = true; ps.kind = a.kind; if (ptr) ptr.poking = true;
+      st.active = -1; /* stop that hand's ray from also moving the pointer */
+      if (a.kind === 'board') Sc().setXRRay(boardRay(P));
+      if (MW.Audio) MW.Audio.play('click');
+      XR().pressAt(a, true, ps);
+      ps.last = a;
+      return;
+    }
+    const a = pokeTarget(P, isFan, RELEASE);
+    if (a && a.kind === ps.kind) {
+      if (a.kind === 'board') { Sc().setXRRay(boardRay(P)); XR().moveAt(a); }
+      ps.last = a;
+      return;
+    }
+    endPoke(ps, a || ps.last, ptr, P);
+  }
+  function endPoke(ps, a, ptr, P) {
+    if (a) {
+      if (a.kind === 'board' && P) Sc().setXRRay(boardRay(P));
+      XR().pressAt(a, false, ps);
+    }
+    ps.poking = false; ps.last = null; if (ptr) ptr.poking = false;
+  }
+
   /* ---------- wiring ---------- */
   let lastT = 0, tipped = false;
   function frame(now) {
@@ -344,6 +480,10 @@
     if (!H.av) { buildAvatar(); layoutAvatar(); }
     updateFan(dt);
     updateAvatar(now);
+    for (let i = 0; i < H.hands.length; i++) { updateHandViz(H.hands[i]); updatePoke(i, H.pokes[i]); if (!XR().active || XR()._st.ending) return; /* a tap on Exit just ended the session */ }
+    /* gloves on controllers; hidden when your real hands are tracked */
+    const st = XR()._st;
+    H.mitts.forEach((m, i) => { const p = st.pointers[i]; m.visible = !!(p && p.connected && !p.hand && H.grips[i].userData.connected); });
     if (!tipped && matchOn() && UI().Game.st.active === 0) {
       tipped = true;
       setTimeout(() => { if (XR().active && UI().toast) UI().toast('Turn your left hand so its side faces you to see your cards. Point at one with your right hand and drag it onto the board.'); }, 2500);
@@ -351,8 +491,15 @@
   }
   function beforeSession() {
     const r = Sc().renderer;
+    H.hands = []; H.pokes = []; H.mitts = [];
     for (let i = 0; i < 2; i++) {
+      const hand = r.xr.getHand(i);
+      Sc().stage.add(hand);
+      H.hands.push(buildHandViz(hand));
+      H.pokes.push({ poking: false, down: false, downTarget: null, last: null });
       const g = r.xr.getControllerGrip(i);
+      const mitt = buildMitt(1); g.add(mitt); H.mitts.push(mitt);
+      g.addEventListener('connected', e => { mitt.position.x = 0; mitt.scale.x = (e.data && e.data.handedness === 'left') ? -1 : 1; });
       g.addEventListener('connected', e => { g.userData.connected = true; g.userData.handedness = e.data && e.data.handedness; });
       g.addEventListener('disconnected', () => { g.userData.connected = false; });
       Sc().stage.add(g);
