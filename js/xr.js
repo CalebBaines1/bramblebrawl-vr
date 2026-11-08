@@ -238,6 +238,7 @@
     return { kind: 'none', x: st.lastClient.x, y: st.lastClient.y };
   }
   function elementAt(panel, x, y) {
+    if (!panel.el || !document.body.contains(panel.el)) return null; /* that panel has gone away */
     let el = document.elementFromPoint(x, y);
     if (el && panel.el.contains(el)) return el;
     /* something else covers that spot on the flat page: search inside the panel ourselves */

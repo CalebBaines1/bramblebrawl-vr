@@ -129,18 +129,25 @@
     for (let i = 0; i < H.hands.length; i++) {
       if (handSide(i) !== side) continue;
       const J = H.hands[i].hand.joints || {};
-      if (J.wrist && J.wrist.visible && J['middle-finger-metacarpal']) {
+      if (J.wrist && J.wrist.visible && J['middle-finger-metacarpal'] && J['index-finger-metacarpal'] && J['pinky-finger-metacarpal']) {
         const wrist = J.wrist.getWorldPosition(new T.Vector3());
         const mid = J['middle-finger-metacarpal'].getWorldPosition(new T.Vector3());
-        const fwd = mid.clone().sub(wrist).normalize();
-        return { wrist, palm: wrist.clone().lerp(mid, 0.75), fwd, tracked: true, i };
+        /* the same forearm axis the sleeve is drawn along (wrist to knuckles) */
+        const knuck = J['middle-finger-phalanx-proximal'] ? jp(J, 'middle-finger-phalanx-proximal') : mid;
+        const fwd = knuck.sub(wrist).normalize();
+        /* palm side of the hand and forearm (the underside when your palm faces down) */
+        const across = jp(J, 'index-finger-metacarpal').sub(jp(J, 'pinky-finger-metacarpal'));
+        const under = new T.Vector3().crossVectors(fwd, across).multiplyScalar(side === 'left' ? 1 : -1);
+        under.addScaledVector(fwd, -under.dot(fwd)).normalize();
+        return { wrist, palm: wrist.clone().lerp(mid, 0.75), fwd, under, tracked: true, i };
       }
       const g = H.grips[i];
       if (g && g.userData.connected) {
         g.updateMatrixWorld();
         const pos = new T.Vector3().setFromMatrixPosition(g.matrixWorld);
         const fwd = new T.Vector3(0, 0, -1).applyQuaternion(g.getWorldQuaternion(tmpQ)).normalize();
-        return { wrist: pos.clone().addScaledVector(fwd, -0.06), palm: pos.clone(), fwd, tracked: false, i };
+        const under = new T.Vector3(0, -1, 0).applyQuaternion(tmpQ).normalize();
+        return { under, wrist: pos.clone().addScaledVector(fwd, -0.06), palm: pos.clone(), fwd, tracked: false, i };
       }
     }
     return null;
@@ -151,7 +158,7 @@
     const want = !!(L && H.tab !== 'hide' && !XR()._st.setup && !UI().Game.paused && L.palm.distanceTo(head) < 0.85);
     if (want) {
       const toHead = head.clone().sub(L.palm).normalize();
-      const anchor = L.palm.clone().addScaledVector(toHead, 0.03).add(new T.Vector3(0, 0.1, 0));
+      const anchor = L.palm.clone().addScaledVector(L.fwd, 0.05).addScaledVector(toHead, 0.02).add(new T.Vector3(0, 0.13, 0)); /* past your fingertips, clear of the sleeve icons */
       H.fan.position.lerp(anchor, H.shown < 0.05 ? 1 : 0.5);
       H.fan.lookAt(head);
       H.anchor = anchor;
@@ -489,8 +496,8 @@
     let prev = 'wrist';
     parts.forEach(pt => { const n = f + '-' + pt; JOINTS.push(n); if (pt !== 'metacarpal' || f === 'thumb') BONES.push([prev, n]); prev = n; });
   });
-  const GLOVE = 0xf4ecd8, CUFF = 0x3f8a2d, SLEEVE = 0x4f7f3a;
-  const gloveMat = () => new T.MeshStandardMaterial({ color: GLOVE, roughness: 0.75 });
+  const GLOVE = 0xb08a5e, CUFF = 0x2f6424, SLEEVE = 0x3b5f2e; /* leather garden gloves, muted so they don't glow in passthrough */
+  const gloveMat = () => new T.MeshStandardMaterial({ color: GLOVE, roughness: 0.9 });
   function buildSleeve(side) {
     /* a rolled cuff at the wrist and a sleeve up the forearm; +Y runs from the wrist toward the elbow */
     const g = new T.Group();
@@ -581,7 +588,7 @@
 
   /* ---------- the strip on your left sleeve: creatures, spells, hide cards, pause ---------- */
   const STRIP = [
-    { key: 'creatures', label: 'Creatures' }, { key: 'spells', label: 'Spells' }, { key: 'hide', label: 'Hide' }, { key: 'pause', label: 'Pause' }
+    { key: 'creatures', label: 'Creatures' }, { key: 'spells', label: 'Spells' }, { key: 'hide', label: 'Hide' }, { key: 'end', label: 'End turn' }, { key: 'pause', label: 'Pause' }
   ];
   function drawIcon(g, key) {
     g.save(); g.translate(64, 52); g.fillStyle = '#2f2a1f'; g.strokeStyle = '#2f2a1f'; g.lineWidth = 7; g.lineCap = 'round';
@@ -594,19 +601,27 @@
       g.beginPath(); g.moveTo(-28, 0); g.quadraticCurveTo(0, -26, 28, 0); g.quadraticCurveTo(0, 26, -28, 0); g.stroke();
       g.beginPath(); g.arc(0, 0, 8, 0, Math.PI * 2); g.fill();
       g.beginPath(); g.moveTo(-24, 22); g.lineTo(24, -22); g.stroke();
+    } else if (key === 'end') { /* skip forward */
+      g.beginPath(); g.moveTo(-24, -20); g.lineTo(-2, 0); g.lineTo(-24, 20); g.closePath(); g.fill();
+      g.beginPath(); g.moveTo(-4, -20); g.lineTo(18, 0); g.lineTo(-4, 20); g.closePath(); g.fill();
+      g.fillRect(19, -20, 7, 40);
     } else { /* pause */
       g.fillRect(-16, -22, 11, 44); g.fillRect(5, -22, 11, 44);
     }
     g.restore();
   }
-  function stripTex(b, on) {
+  /* state: 'on' (chosen tab, or End turn ready), 'off', or 'dim' (End turn not available) */
+  function stripTex(b, state, label) {
     const c = b.canvas, g = c.getContext('2d');
     g.clearRect(0, 0, 128, 128);
-    g.fillStyle = on ? '#fac775' : '#fbf6e9'; g.strokeStyle = on ? '#b4761f' : '#2f2a1f'; g.lineWidth = 6;
+    g.globalAlpha = state === 'dim' ? 0.45 : 1;
+    const end = b.key === 'end';
+    g.fillStyle = state === 'on' ? (end ? '#e2643a' : '#fac775') : '#fbf6e9'; g.strokeStyle = state === 'on' ? (end ? '#8f3417' : '#b4761f') : '#2f2a1f'; g.lineWidth = 6;
     g.beginPath(); g.arc(64, 64, 58, 0, Math.PI * 2); g.fill(); g.stroke();
     drawIcon(g, b.key);
-    g.fillStyle = '#2f2a1f'; g.font = '600 19px system-ui, sans-serif'; g.textAlign = 'center'; g.fillText(b.label, 64, 104);
-    b.tex.needsUpdate = true; b.on = on;
+    g.fillStyle = '#2f2a1f'; g.font = '600 19px system-ui, sans-serif'; g.textAlign = 'center'; g.fillText(label || b.label, 64, 104);
+    g.globalAlpha = 1;
+    b.tex.needsUpdate = true; b.state = state + ':' + (label || '');
   }
   function buildStrip() {
     const root = new T.Group(); root.visible = false;
@@ -614,9 +629,10 @@
       const canvas = document.createElement('canvas'); canvas.width = canvas.height = 128;
       const tex = new T.CanvasTexture(canvas);
       const mesh = new T.Mesh(new T.PlaneGeometry(0.03, 0.03), new T.MeshBasicMaterial({ map: tex, transparent: true, alphaTest: 0.05, side: T.DoubleSide }));
-      mesh.position.x = (i - 1.5) * 0.034; mesh.renderOrder = 27;
+      /* a column down the forearm, first icon nearest the hand */
+      mesh.position.y = ((STRIP.length - 1) / 2 - i) * 0.034; mesh.renderOrder = 27;
       root.add(mesh);
-      const b = Object.assign({}, d, { canvas, tex, mesh, on: null });
+      const b = Object.assign({}, d, { canvas, tex, mesh, state: null });
       b.fn = () => pressStrip(d.key);
       return b;
     });
@@ -626,6 +642,7 @@
   function pressStrip(key) {
     if (MW.Audio) MW.Audio.play('click');
     if (key === 'pause') { if (UI().openPause) UI().openPause(); return; }
+    if (key === 'end') { const e = document.querySelector('#endturn'); if (e && !e.disabled) e.click(); else if (MW.Audio) MW.Audio.play('deny'); return; }
     H.tab = key;
     if (key !== 'hide' && UI().mode.k === 'place') UI().cancelMode();
   }
@@ -634,19 +651,21 @@
     const L = matchOn() || (UI().Game.st && UI().Game.paused) ? handFrame('left') : null;
     s.root.visible = !!L && !XR()._st.setup;
     if (!s.root.visible) return;
-    const head = headPos(new T.Vector3());
-    /* along the top of the forearm, a little up the sleeve, turned to face you */
-    const base = L.wrist.clone().addScaledVector(L.fwd, -0.075);
-    const zf = head.clone().sub(base).normalize();
-    base.addScaledVector(zf, 0.05);
-    let x = L.fwd.clone().negate(); x.addScaledVector(zf, -x.dot(zf));
-    if (x.lengthSq() < 1e-4) x.set(1, 0, 0); x.normalize();
-    let y = new T.Vector3().crossVectors(zf, x);
-    if (y.y < 0) { x.negate(); y.negate(); }
-    _m.makeBasis(x, y, zf);
-    s.root.position.copy(base);
+    /* stuck to the underside of the forearm, just outside the sleeve: turn your palm up to read it */
+    const z = L.under.clone();
+    const y = L.fwd.clone(); y.addScaledVector(z, -y.dot(z)).normalize(); /* icons stand upright toward your hand */
+    const x = new T.Vector3().crossVectors(y, z);
+    _m.makeBasis(x, y, z);
     s.root.quaternion.setFromRotationMatrix(_m);
-    s.btns.forEach(b => { const on = b.key === H.tab; if (on !== b.on) stripTex(b, on); });
+    s.root.position.copy(L.wrist).addScaledVector(L.fwd, -0.1).addScaledVector(z, 0.053);
+    const eb = document.querySelector('#endturn');
+    const pulse = !!(eb && eb.classList.contains('pulse'));
+    s.btns.forEach(b => {
+      let st, label;
+      if (b.key === 'end') { st = eb && !eb.disabled ? 'on' : 'dim'; label = eb ? eb.textContent : ''; b.mesh.scale.setScalar(pulse ? 1 + 0.12 * Math.sin(performance.now() / 160) : 1); }
+      else st = b.key === H.tab ? 'on' : 'off';
+      if (st + ':' + (label || '') !== b.state) stripTex(b, st, label);
+    });
   }
 
   /* ---------- tapping with your index finger ---------- */
@@ -730,11 +749,12 @@
       ps.poking = false; ps.last = null; if (ptr) ptr.poking = false;
       return;
     }
-    if (a) {
-      if (a.kind === 'board' && P) Sc().setXRRay(boardRay(P));
-      XR().pressAt(a, false, ps);
-    }
-    ps.poking = false; ps.last = null; if (ptr) ptr.poking = false;
+    try {
+      if (a) {
+        if (a.kind === 'board' && P) Sc().setXRRay(boardRay(P));
+        XR().pressAt(a, false, ps);
+      }
+    } finally { ps.poking = false; ps.last = null; if (ptr) ptr.poking = false; }
   }
 
   /* ---------- wiring ---------- */
@@ -757,7 +777,7 @@
     H.mitts.forEach((m, i) => { const p = st.pointers[i]; m.visible = !!(p && p.connected && !p.hand && H.grips[i].userData.connected); });
     if (!tipped && matchOn() && UI().Game.st.active === 0) {
       tipped = true;
-      setTimeout(() => { if (XR().active && UI().toast) UI().toast('Your cards float over your left hand. Grab one with your right hand and let go over a lane. The icons on your left sleeve switch between creatures and spells, hide the cards, or pause.'); }, 2500);
+      setTimeout(() => { if (XR().active && UI().toast) UI().toast('Your cards float over your left hand. Grab one with your right hand and let go over a lane. Turn your left palm up to see the icons under your sleeve: creatures, spells, hide, end turn and pause.'); }, 2500);
     }
   }
   function beforeSession() {
