@@ -45,6 +45,31 @@
   /* ---------- materials & helpers ---------- */
   const M = (c, o) => new T.MeshStandardMaterial(Object.assign({ color: c, roughness: 0.85 }, o || {}));
   function mesh(g, m, x, y, z) { const o = new T.Mesh(g, m); o.position.set(x || 0, y || 0, z || 0); o.castShadow = true; o.receiveShadow = true; return o; }
+  /* Merge many small static meshes into one draw call. Each part keeps its own colour through vertex colours.
+     parts: meshes whose matrices are relative to the same frame (their parent's). */
+  function mergeParts(parts, opts) {
+    opts = opts || {};
+    const pos = [], nor = [], col = [], c = new T.Color();
+    parts.forEach(m => {
+      m.updateMatrix();
+      let g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry.clone();
+      g.applyMatrix4(opts.frame ? new T.Matrix4().multiplyMatrices(opts.frame, m.matrixWorld) : m.matrix);
+      if (!g.attributes.normal) g.computeVertexNormals();
+      const p = g.attributes.position.array, nn = g.attributes.normal.array;
+      c.copy(m.material.color);
+      for (let i = 0; i < p.length; i++) { pos.push(p[i]); nor.push(nn[i]); }
+      for (let i = 0; i < p.length / 3; i++) col.push(c.r, c.g, c.b);
+      g.dispose();
+    });
+    const geo = new T.BufferGeometry();
+    geo.setAttribute('position', new T.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new T.Float32BufferAttribute(nor, 3));
+    geo.setAttribute('color', new T.Float32BufferAttribute(col, 3));
+    const mat = opts.material || new T.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, flatShading: opts.flat !== false });
+    const out = new T.Mesh(geo, mat);
+    out.castShadow = opts.cast !== false; out.receiveShadow = true;
+    return out;
+  }
   function canvasTex(w, h, draw) {
     const c = document.createElement('canvas'); c.width = w; c.height = h;
     draw(c.getContext('2d'), w, h);
@@ -127,6 +152,7 @@
       for (let i = 0; i < 2200; i++) { g.fillStyle = ['#b48a5a', '#a07a4c', '#c49c6a'][i % 3]; g.globalAlpha = rnd(0.25, 0.6); const x = w / 2 + (Math.random() + Math.random() - 1) * w * 0.42; g.fillRect(x, Math.random() * h, 3, 3); }
     });
     const flowerGeo = new T.SphereGeometry(0.07, 6, 5);
+    const padStones = [], padStoneGeo = new T.DodecahedronGeometry(0.11, 0);
     const borderFl = [0xffffff, 0xfac775, 0xf4c0d1].map(c => new T.InstancedMesh(flowerGeo, new T.MeshStandardMaterial({ color: c, roughness: 0.6 }), 160));
     const flCount = [0, 0, 0];
     for (let l = 0; l < RR.lanes; l++) {
@@ -136,7 +162,7 @@
       [-1, 1].forEach(sd => {
         const pad = new T.Mesh(new T.CircleGeometry(1.25, 28), new T.MeshStandardMaterial({ color: 0xc9a774, roughness: 1, transparent: true, opacity: 0.75, depthWrite: false }));
         pad.rotation.x = -Math.PI / 2; pad.position.set(x, 0.02, sd * RR.unitZ); pad.receiveShadow = true; scene.add(pad);
-        for (let k = 0; k < 12; k++) { const a = k / 12 * Math.PI * 2; const st = mesh(new T.DodecahedronGeometry(0.11, 0), M(k % 2 ? 0x9d9a8c : 0x8c8c84, { flatShading: true }), x + Math.cos(a) * 1.3, 0.05, sd * RR.unitZ + Math.sin(a) * 1.3); st.castShadow = false; scene.add(st); }
+        for (let k = 0; k < 12; k++) { const a = k / 12 * Math.PI * 2; padStones.push(mesh(padStoneGeo, M(k % 2 ? 0x9d9a8c : 0x8c8c84), x + Math.cos(a) * 1.3, 0.05, sd * RR.unitZ + Math.sin(a) * 1.3)); }
         const stump = mesh(new T.CylinderGeometry(0.75, 0.9, 0.22, 10), M(0x7a5a33, { flatShading: true }), x, 0.11, sd * RR.structZ);
         stump.add(mesh(new T.CylinderGeometry(0.62, 0.62, 0.23, 10), M(0xa9825a), 0, 0, 0)); scene.add(stump);
       });
@@ -151,6 +177,7 @@
       }
     }
     borderFl.forEach((m, k) => { m.count = flCount[k]; scene.add(m); });
+    scene.add(mergeParts(padStones, { cast: false }));
 
     /* grass tufts and wildflowers */
     const tuftGeo = new T.ConeGeometry(0.1, 0.6, 4);
@@ -172,10 +199,12 @@
     });
 
     /* hills */
+    const hills = [];
     const hillGeo = new T.SphereGeometry(1, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2);
     [[-30, -32, 16, 0x5f9a3a], [0, -42, 22, 0x558f33], [32, -30, 16, 0x5f9a3a], [-46, -6, 12, 0x6aa544], [46, -4, 12, 0x6aa544], [-40, 26, 14, 0x6aa544], [40, 28, 14, 0x5f9a3a]].forEach(([x, z, r, c]) => {
-      const h = mesh(hillGeo, M(c), x, -0.1, z); h.scale.set(r * 1.6, r * 0.42, r); h.castShadow = false; envAdd(h);
+      const h = mesh(hillGeo, M(c), x, -0.1, z); h.scale.set(r * 1.6, r * 0.42, r); hills.push(h);
     });
+    envAdd(mergeParts(hills, { cast: false, flat: false }));
 
     /* trees, including the two old oaks at either end */
     const treeAt = (x, z, s, oak) => {
@@ -183,7 +212,7 @@
       g.add(mesh(new T.CylinderGeometry(0.35 * s, 0.6 * s, 3 * s, 8), M(0x6b4a2a, { flatShading: true }), 0, 1.5 * s, 0));
       const crown = new T.Group(); crown.position.y = 0;
       const greens = [0x3f8a2d, 0x4a9a34, 0x367a26];
-      [[0, 3.8, 2.0], [1.1, 3.2, 1.5], [-1, 3.3, 1.4], [0.2, 4.9, 1.3], [-0.4, 3.6, -1.1]].forEach(([dx, dy, r], i) => crown.add(mesh(new T.IcosahedronGeometry(r * s, 1), M(greens[i % 3], { flatShading: true }), dx * s, dy * s, (i === 4 ? -0.6 : 0) * s)));
+      crown.add(mergeParts([[0, 3.8, 2.0], [1.1, 3.2, 1.5], [-1, 3.3, 1.4], [0.2, 4.9, 1.3], [-0.4, 3.6, -1.1]].map(([dx, dy, r], i) => mesh(new T.IcosahedronGeometry(Math.abs(r) * s, 1), M(greens[i % 3]), dx * s, dy * s, (i === 4 ? -0.6 : 0) * s))));
       g.add(crown);
       if (oak) {
         const hive = mesh(new T.SphereGeometry(0.62, 14, 10), M(0xe8b23a), 1.35 * s, 2.9 * s, 0.7 * s); hive.scale.y = 1.3; g.add(hive);
@@ -200,17 +229,21 @@
     buildTableBase();
 
     /* bushes and rocks around the edge */
+    const edge = [];
     for (let i = 0; i < 26; i++) {
       const a = rnd(0, Math.PI * 2), r = rnd(13, 20);
       const x = Math.cos(a) * r * 1.2, z = Math.sin(a) * r * 0.85;
-      if (Math.random() < 0.6) { const b = mesh(new T.IcosahedronGeometry(rnd(0.6, 1.1), 1), M(0x4a9a34, { flatShading: true }), x, 0.3, z); b.scale.y = 0.7; envAdd(b); }
-      else { const r2 = mesh(new T.DodecahedronGeometry(rnd(0.4, 0.9), 0), M(0x9d9a8c, { flatShading: true }), x, 0.2, z); r2.scale.y = 0.6; envAdd(r2); }
+      if (Math.random() < 0.6) { const b = mesh(new T.IcosahedronGeometry(rnd(0.6, 1.1), 1), M(0x4a9a34), x, 0.3, z); b.scale.y = 0.7; edge.push(b); }
+      else { const r2 = mesh(new T.DodecahedronGeometry(rnd(0.4, 0.9), 0), M(0x9d9a8c), x, 0.2, z); r2.scale.y = 0.6; edge.push(r2); }
     }
+    envAdd(mergeParts(edge));
 
     /* clouds */
+    const cloudMat = new T.MeshLambertMaterial({ color: 0xffffff, emissive: 0xbbbbbb });
     for (let i = 0; i < 8; i++) {
       const g = new T.Group();
-      for (let k = 0; k < 5; k++) g.add(new T.Mesh(new T.SphereGeometry(rnd(2, 3.6), 10, 8), new T.MeshLambertMaterial({ color: 0xffffff, emissive: 0xbbbbbb })).translateX(k * 2.6 - 5).translateY(rnd(-0.6, 0.8)));
+      const puffs = []; for (let k = 0; k < 5; k++) puffs.push(new T.Mesh(new T.SphereGeometry(rnd(2, 3.6), 10, 8), cloudMat).translateX(k * 2.6 - 5).translateY(rnd(-0.6, 0.8)));
+      g.add(mergeParts(puffs, { material: cloudMat, cast: false, flat: false }));
       g.position.set(rnd(-90, 90), rnd(30, 42), rnd(-90, -30)); g.scale.y = 0.55;
       envAdd(g); decor.clouds.push(g);
     }
@@ -455,8 +488,58 @@
     v.hpTex.needsUpdate = true;
   }
 
+  /* Creatures read small on a table, so XR draws them a little larger (the lanes stay the same size). */
+  let unitScale = 1;
+  /* Creature rigs are built from dozens of primitives. Merge the parts that never move on their own
+     (anything the rig doesn't keep a handle to) into one mesh per parent, so each creature costs a few draw calls. */
+  function mergeRig(rig) {
+    const keep = new Set([rig.root, rig.body]);
+    const walk = v => { if (!v) return; if (v.isObject3D) keep.add(v); else if (Array.isArray(v)) v.forEach(walk); else if (typeof v === 'object') Object.values(v).forEach(walk); };
+    walk(rig.parts);
+    Object.values(rig).forEach(v => { if (v && v.isObject3D) keep.add(v); });
+    const parents = []; rig.root.traverse(o => { if (o.children.length > 1) parents.push(o); });
+    parents.forEach(par => {
+      const groups = new Map();
+      par.children.forEach(m => {
+        if (!m.isMesh || keep.has(m) || m.children.length || m.isInstancedMesh || m.userData.keep) return;
+        const mt = m.material;
+        if (!mt || mt.type !== 'MeshStandardMaterial' || mt.transparent || mt.map || (m.userData.baseEm || 0) !== 0 || (mt.emissiveIntensity && mt.emissive && mt.emissive.getHex())) return;
+        const key = [mt.flatShading, mt.roughness.toFixed(2), mt.metalness.toFixed(2), mt.side].join('|');
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(m);
+      });
+      groups.forEach(list => {
+        if (list.length < 2) return;
+        const mt = list[0].material;
+        const merged = mergeParts(list, { material: new T.MeshStandardMaterial({ vertexColors: true, roughness: mt.roughness, metalness: mt.metalness, flatShading: mt.flatShading, side: mt.side }) });
+        merged.castShadow = list.some(m => m.castShadow);
+        merged.userData.baseEm = 0; merged.userData.baseEmI = 0;
+        list.forEach(m => par.remove(m));
+        par.add(merged);
+      });
+    });
+    /* tiny details (eyes, buttons, petals) don't need to cast shadows */
+    rig.root.traverse(m => {
+      if (!m.isMesh) return;
+      if (!m.geometry.boundingSphere) m.geometry.computeBoundingSphere();
+      const sc = new T.Vector3(); m.getWorldScale(sc);
+      if (m.geometry.boundingSphere.radius * Math.max(sc.x, sc.y, sc.z) < 0.18) m.castShadow = false;
+    });
+  }
+  function wrapScale(rig) {
+    mergeRig(rig);
+    const inner = new T.Group(); inner.name = 'unitScale';
+    [...rig.root.children].forEach(c => inner.add(c));
+    rig.root.add(inner); rig.inner = inner; rig.baseHeight = rig.height;
+    inner.scale.setScalar(unitScale); rig.height = rig.baseHeight * unitScale;
+  }
+  function setUnitScale(k) {
+    unitScale = k;
+    views.forEach(v => { if (v.rig.inner) { v.rig.inner.scale.setScalar(k); v.rig.height = v.rig.baseHeight * k; } });
+  }
   function makeView(u, side) {
     const rig = MW.Models.creature(u.id);
+    wrapScale(rig);
     const v = {
       uid: u.uid, id: u.id, side, rig, root: rig.root, base: { x: u.x, z: u.z }, hp: u.hp, maxHp: u.maxHp, atk: MW.Rules.CREATURES[u.id].atk,
       shield: 0, flags: {}, anim: 0, flash: 0, tint: 0, key: '', ph: rnd(0, 6), blinkAt: performance.now() + rnd(1000, 4000), face: side === 0 ? Math.PI : 0,
@@ -1708,6 +1791,7 @@
       renderer.setClearColor(0x6fae3f, 1);
       camera.near = 0.1; camera.updateProjectionMatrix();
       Object.assign(sun.shadow.camera, baseShadow); sun.shadow.camera.updateProjectionMatrix();
+      setShadowQuality(2048, T.PCFSoftShadowMap); setUnitScale(1);
       resize();
       return;
     }
@@ -1720,6 +1804,12 @@
     stage.fog = ar ? null : new T.Fog(0xcfe6d6, 45, 120);
     renderer.setClearColor(0x000000, ar ? 0 : 1);
     camera.near = 0.02; camera.updateProjectionMatrix();
+    /* the headset draws everything twice, so keep shadows cheap */
+    setShadowQuality(1024, T.PCFShadowMap); setUnitScale(o.unitScale || 1.3);
+  }
+  function setShadowQuality(size, type) {
+    if (sun.shadow.mapSize.x !== size) { sun.shadow.mapSize.set(size, size); if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; } }
+    renderer.shadowMap.type = type;
   }
   function fadeCrown(k, on) {
     if (!k) return;
@@ -1752,6 +1842,6 @@
     keeperGlow, pickKeeper, keeperScreen: side => { const k = keepers[side]; return k ? worldToScreen(k.pos.x, k.pos.y, k.pos.z) : null; },
     structView: uid => structs.get(uid), view: uid => views.get(uid), setStructGlow(uid, on) { const s = structs.get(uid); if (s) s.glow = !!on; },
     markPlayerFired(uid) { const s = structs.get(uid); if (s) s.playerFired = true; }, markPlayerPumped(uid) { const s = structs.get(uid); if (s) s.playerPumped = true; },
-    emit, ringWave
+    emit, ringWave, _mergeRig: mergeRig, keeperPos: side => (keepers[side] ? keepers[side].pos.clone() : null)
   };
 })(typeof window !== 'undefined' ? window : globalThis);

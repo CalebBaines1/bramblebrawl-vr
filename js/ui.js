@@ -362,6 +362,8 @@
       if (Game.st !== st) return;
       const a = MW.AI.next(st, 1, Game.diff);
       if (!a) break;
+      await aiShow(a, st);
+      if (Game.st !== st) return;
       const ev = R.apply(st, 1, a);
       if (!ev) break;
       render();
@@ -372,6 +374,8 @@
     if (Game.st !== st) return;
     if (st.over) { Game.busy = false; finish(); return; }
     await whilePaused();
+    await aiShow({ type: 'end' }, st);
+    if (Game.st !== st) return;
     const ev = R.endTurn(st, 1);
     await playSafe(ev, st);
     if (Game.st !== st) return;
@@ -400,6 +404,8 @@
       const t = now();
       if (b.plan.length && t >= b.next && !Game.busy) {
         const a = b.plan.shift();
+        Game.busy = true; await aiShow(a, st); Game.busy = false;
+        if (Game.st !== st) break;
         const ev = R.apply(st, 1, a);
         if (ev) { Game.busy = true; render(); await playSafe(ev, st); Game.busy = false; render(); }
         b.next = now() + 1500 + Math.random() * 2500;
@@ -416,6 +422,12 @@
     Game.busy = true;
     const ev = R.apply(st, 0, { type: 'endBrawl' });
     if (ev) await playSafe(ev, st);
+  }
+
+  /* lets the headset's opponent avatar act out a move before it happens */
+  async function aiShow(a, st) {
+    if (!MW.UI.aiHook) return;
+    try { await MW.UI.aiHook(a, st); } catch (e) { console.error(e); }
   }
 
   function finish() {
@@ -1149,6 +1161,8 @@
   MW.UI = {
     boot, show, startMatch, endMatch, toast, banner, modal, closeModal, render, Game, Bus, progress, settings, saveProgress,
     gate: null, tutorialZone: false, setPaused, cancelMode, get mode() { return mode; },
-    _dbg: { act, endTurn }
+    _dbg: { act, endTurn },
+    cardHTML(kind, id) { return kind === 'creature' ? creatureCardHTML(id) : kind === 'struct' ? structCardHTML(id) : spellCardHTML(id, 0); },
+    aiHook: null
   };
 })(typeof window !== 'undefined' ? window : globalThis);
