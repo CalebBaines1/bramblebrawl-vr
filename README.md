@@ -32,15 +32,19 @@ original name, `bramblebrawl-vr`, so the GitHub Pages link stays the same.
     trigger or grip) and let go over a lane.
   - Spells: grab the spell card and keep holding until it crushes into a glowing orb, then let go over the
     target (an enemy, one of your creatures, or anywhere for spells with no target).
-  - On the board, pinch close to a creature, the slingshot or the bellows to grab it: drag a creature onto an
-    enemy to attack, pull the slingshot back toward you and let go to fire, pinch the bellows to pump.
+  - On the board, reach down to a creature, the slingshot or the bellows: a ring lights up under the piece
+    your hand would pick up. Close your hand on it (pinch or fist) to grab it. Drop a creature on or near an
+    enemy to attack (the drop snaps to the closest enemy, the Keeper, or a lane you can step into), pull the
+    slingshot back toward you and let go to fire, grab the bellows to pump.
+  - With hand tracking there is no pointer ray during a match: everything is touched or grabbed. The ray
+    comes back in menus, and controllers keep theirs.
   - Turn your left palm up to see the icons on the underside of your sleeve: **Creatures** (creatures and
     structures), **Spells**, **Hide** (put the cards away), **End turn** (lit on your turn, pulsing when you're
-    out of moves; it reads **Done** during the Brawl) and **Pause** (resume, board setup, quit, exit VR).
-  - From further away you can still point a ray at the board and pinch (or pull the trigger) as before.
+    out of moves) and **Pause** (resume, board setup, quit, exit VR).
+  - With controllers you can still point the ray at the board and pull the trigger from further away.
   - Cards you draw float from your Keeper into your hand.
   - Your hands show as cartoon gloves with sleeves, with hand tracking or controllers. With hand tracking
-    you can tap menus, cards, sleeve icons and the board with your index finger.
+    you can tap menus and sleeve icons with your index finger.
   - **Table ▲ / ▼** on the HUD (or the main menu) raises or lowers the table 3 cm a step; it's remembered.
     **Exit VR** leaves the headset view.
   - The opponent sits across the table and plays its cards the same way, so you can see what it's doing.
@@ -51,7 +55,7 @@ original name, `bramblebrawl-vr`, so the GitHub Pages link stays the same.
 
 ## Rules
 
-Every match except the tutorial uses the Brawl rules (the tutorial keeps the original rules so its script
+Every match except the tutorial uses the newer rules (the tutorial keeps the original rules so its script
 still works). All numbers live in `RULES.v2` in `js/rules.js`.
 
 - Keepers have 15 health. A match lasts at most 8 rounds; if both Keepers stand, the healthier one wins.
@@ -61,8 +65,8 @@ still works). All numbers live in `RULES.v2` in `js/rules.js`.
 - Your squad of 8 is a deck: start with 3 creatures in reserve and draw 1 each turn.
 - When an attack defeats a creature, the extra damage spills over into that side's Keeper.
 - **Prime:** once per match, hold one of your creatures to fire its own trick (Shell up, Flare, Rockfall ...).
-- **Brawl:** after each round, if anyone has a structure, both players work their structures at the same time
-  for 15 seconds. Structures only fire in the Brawl. The Bellows buff lasts into your next turn.
+- **Structures** work on your own turn, alongside your creatures: each one once per turn, including the turn
+  you build it. The Bellows buff lasts for the rest of that turn.
 
 ## How the XR layer works
 

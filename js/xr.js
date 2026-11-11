@@ -15,7 +15,7 @@
   const PX = 0.00058; /* metres per CSS pixel on HUD panels */
 
   /* extension points for js/xrhands.js (card hand and opponent avatar) */
-  const hooks = { frame: [], aim: [], beforeSession: [], start: [], stop: [], select: [], squeeze: [] };
+  const hooks = { frame: [], aim: [], beforeSession: [], start: [], stop: [], select: [], squeeze: [], rayless: [] };
   const st = {
     session: null, mode: null, refSpace: null, placing: false, placed: false,
     hitSource: null, viewerSpace: null, reticle: null, rig: null, boardPos: new T.Vector3(), boardYaw: 0,
@@ -299,10 +299,13 @@
       st.dirty = true;
     }
   }
+  /* tracked hands in a match have no ray: they work by touching and grabbing */
+  const rayless = p => hooks.rayless.some(f => f(p));
   function updatePointers() {
     st.pointers.forEach(p => {
       p.line.visible = p.connected && !(p.hand && st.mode === 'ar' && p.i !== st.active);
       if (!p.connected) return;
+      if (rayless(p)) { p.line.visible = false; p.dot.visible = false; p.hit = null; return; }
       const a = aim(p);
       p.hit = a;
       if (a.kind !== 'none') { p.dot.visible = true; p.dot.position.copy(a.point); p.line.scale.z = Math.max(0.05, a.dist); }
