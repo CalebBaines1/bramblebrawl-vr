@@ -91,7 +91,7 @@
     maxField: 4, squadSize: 5, maxStructures: 2, ptsPerTurn: 2, ptsCap: 10, handMax: 7,
     surgeAt: 3, keeperHp: 25, lanes: 5, laneW: 3.6, unitZ: 2.8, structZ: 6.4, frontLine: 0, halfMin: 1.3, halfMax: 7.4, halfX: 9, spacing: 1.9, turnLimit: 40,
     directHit: 1.25, graze: 2.3, startPts: [3, 4], secondBonus: null,
-    /* Brawl rules (everything except the tutorial): short matches, a creature deck, a shared structure window */
+    /* Brawl rules (everything except the tutorial): short matches, a creature deck, rounds and Overgrowth */
     v2: { keeperHp: 15, rounds: 8, overgrowthFrom: 7, ptsCap: 7, squadSize: 8, startHand: 3, brawlSecs: 15, secondBonusRounds: 3 }
   };
   /* The tutorial keeps the original rules; every other match uses the Brawl rules. */
@@ -477,8 +477,8 @@
   function canOperate(st, side, suid) {
     const t = structById(st, suid);
     if (!t || st.over || t.side !== side || t.used) return false;
-    /* Brawl rules: structures are worked only in the Brawl window, by both players at once */
-    if (isV2(st) ? st.phase !== 'brawl' : st.active !== side) return false;
+    /* structures are worked on your own turn, once each, alongside your creatures */
+    if (st.active !== side || st.phase === 'brawl') return false;
     if (t.sid === 'bellows') return st.sides[side].field.length > 0;
     return true;
   }
@@ -549,12 +549,6 @@
         const score = st.sides.map(x => x.hp * 100 + x.field.reduce((a, u) => a + u.hp, 0));
         st.over = true; st.winner = score[0] >= score[1] ? 0 : 1;
         ev.push({ t: 'win', side: st.winner, reason: 'time' });
-        return ev;
-      }
-      if (side === 1 && st.sides.some(x => x.structs.length)) {
-        st.phase = 'brawl'; st.active = -1;
-        st.sides.forEach(x => x.structs.forEach(t => { t.used = false; }));
-        ev.push({ t: 'brawl', secs: RULES.v2.brawlSecs });
         return ev;
       }
       startTurn(st, 1 - side, ev);
@@ -785,7 +779,7 @@
   }
 
   const AI = {
-    /* The Brawl window: work each of this side's structures once. */
+    /* work each of this side's structures once (on its own turn) */
     brawl(st, side, diff) {
       diff = diff || 'normal';
       const o = st.sides[1 - side], out = [];
@@ -826,6 +820,10 @@
             if (lane >= 0 && lane !== undefined) return { type: 'deploy', id, lane };
           }
         }
+
+        /* structures: fire the slingshot, pump the bellows before the attacks */
+        const ops = AI.brawl(st, side, diff);
+        if (ops.length) return ops[0];
 
         /* spells */
         let best = null;

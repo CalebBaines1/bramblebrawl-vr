@@ -10,7 +10,7 @@
   const MW = root.MW = root.MW || {};
   const T = root.THREE;
   const XR = () => MW.XR, Sc = () => MW.Scene, R = () => MW.Rules, UI = () => MW.UI;
-  const H = { hands: [], pokes: [], mitts: [], grips: [], fan: null, cards: [], sig: '', shown: 0, show: false, av: null, tw: [], off: null, texCache: new Map() };
+  const H = { closed: [], ring: null, hands: [], pokes: [], mitts: [], grips: [], fan: null, cards: [], sig: '', shown: 0, show: false, av: null, tw: [], off: null, texCache: new Map() };
 
   /* ---------- little tween system driven by the XR frame ---------- */
   const ease = k => (k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2);
@@ -89,7 +89,7 @@
   }
 
   /* ---------- head and hands ---------- */
-  const tmpV = new T.Vector3(), tmpQ = new T.Quaternion();
+  const tmpV = new T.Vector3(), tmpQ = new T.Quaternion(), tmpA = new T.Vector3(), tmpB = new T.Vector3();
   function headPos(out) { const cam = Sc().renderer.xr.getCamera(Sc().camera); return out.setFromMatrixPosition(cam.matrixWorld); }
   function leftGrip() { return H.grips.find(g => g.userData.connected && g.userData.handedness === 'left'); }
   function rightPointer() { const st = XR()._st; return st.pointers.find(p => p.connected && p.handedness === 'right') || st.pointers.find(p => p.connected && p.handedness !== 'left'); }
@@ -252,6 +252,79 @@
     const l = b.local, above = l.y * XR().scale();
     return Math.abs(l.x) > 13.5 || Math.abs(l.z) > 12.75 || above > 0.3 || above < -0.08 ? null : b;
   }
+  /* your own creature or structure nearest a grabbing hand, judged in 3D around the actual piece */
+  const GRAB_R = 0.075, GRAB_UP = 0.2;
+  function pieceNear(P, reach) {
+    const st = XR()._st, g = UI().Game.st;
+    if (!st.placed || st.placing || !g) return null;
+    const S = XR().scale(), l = Sc().board.worldToLocal(P.clone()), above = l.y * S;
+    if (above > GRAB_UP || above < -0.05) return null;
+    const lim = Math.min((reach || GRAB_R) / S, R().RULES.laneW * 0.48);
+    let best = null, bd = lim;
+    const look = (kind, uid, x, z) => {
+      const v = kind === 'unit' && Sc().view(uid), px = v ? v.root.position.x : x, pz = v ? v.root.position.z : z;
+      const d = Math.hypot(l.x - px, l.z - pz);
+      if (d < bd) { bd = d; best = { kind, uid, x: px, z: pz }; }
+    };
+    g.sides[0].field.forEach(u => look('unit', u.uid, u.x, u.z));
+    g.sides[0].structs.forEach(t => look('struct', t.uid, t.x, t.z));
+    return best;
+  }
+  /* a straight-down ray through a board point, so the scene's own picking lands exactly on that piece */
+  function rayAt(x, z) {
+    const w = Sc().board.localToWorld(new T.Vector3(x, 0, z));
+    return new T.Ray(w.clone().add(new T.Vector3(0, 0.3, 0)), new T.Vector3(0, -1, 0));
+  }
+  function boardPt(x, z) { const s2 = Sc().boardToScreen(x, 0, z); return { kind: 'board', x: s2.x, y: s2.y, local: new T.Vector3(x, 0, z) }; }
+  /* while you hold a creature, the drop snaps to the enemy, the Keeper or the lane it is over */
+  function snapDrop(P) {
+    const m = UI().mode, g = UI().Game.st;
+    const l = Sc().board.worldToLocal(P.clone());
+    if (!m || m.k !== 'attack' || !g) return { x: l.x, z: l.z };
+    let best = null, bd = 2.6;
+    g.sides[1].field.forEach(u => {
+      const v = Sc().view(u.uid), x = v ? v.root.position.x : u.x, z = v ? v.root.position.z : u.z;
+      const d = Math.hypot(l.x - x, l.z - z);
+      if (d < bd) { bd = d; best = { x, z }; }
+    });
+    if (best) return best;
+    if (m.keeper) {
+      const k = Sc().keeperPos(1);
+      if (k && Math.hypot(l.x - k.x, l.z - k.z) < 4) return { x: k.x, z: k.z };
+    }
+    for (const ln of m.shifts || []) {
+      const x = R().laneX(ln), z = R().RULES.unitZ;
+      if (Math.hypot(l.x - x, l.z - z) < 2.2) return { x, z };
+    }
+    return { x: l.x, z: l.z };
+  }
+  /* a ring under whatever your open hand would pick up */
+  function updateHover() {
+    if (!H.ring) {
+      H.ring = new T.Mesh(new T.RingGeometry(1.25, 1.6, 40), new T.MeshBasicMaterial({ color: 0xfac775, transparent: true, opacity: 0.85, depthWrite: false, side: T.DoubleSide }));
+      H.ring.rotation.x = -Math.PI / 2; H.ring.renderOrder = 15; H.ring.visible = false;
+      Sc().board.add(H.ring);
+    }
+    let hit = null;
+    if (!H.grab && matchOn() && UI().mode.k === 'idle') {
+      const st = XR()._st;
+      for (let i = 0; i < H.hands.length && !hit; i++) {
+        const p = st.pointers[i];
+        if (!p || !p.connected || !p.hand) continue;
+        hit = pieceNear(grabPoint(p), GRAB_R * 1.2);
+        if (hit) H.hoverPiece = { p, pc: hit };
+      }
+    }
+    if (!hit) H.hoverPiece = null;
+    H.ring.visible = !!hit;
+    if (hit) {
+      const g = UI().Game.st;
+      const ok = hit.kind === 'unit' ? R().canAct(g, R().unitById(g, hit.uid)) || R().canPrime(g, 0, hit.uid) : R().canOperate(g, 0, hit.uid);
+      H.ring.material.color.setHex(ok ? (hit.kind === 'unit' ? 0xfac775 : 0x7fc8f8) : 0x8a8a8a);
+      H.ring.position.set(hit.x, 0.08, hit.z);
+      const k = 1 + 0.06 * Math.sin(performance.now() / 160); H.ring.scale.set(k, k, k);
+    }
+  }
   function startGrab(p, kind) {
     const ps = { down: false, downTarget: null };
     H.grab = { p, ps, kind };
@@ -261,11 +334,17 @@
     return ps;
   }
   /* pinch (or trigger, or grip) near something to grab it: a card in your hand, or a creature, slingshot or bellows on the board */
+  function selectHook(p, down) {
+    /* tracked hands grab by closing, see handGestures(); the system pinch is ignored in a match */
+    if (p.hand && (matchOn() || (H.grab && H.grab.p === p))) return true;
+    return grabSelect(p, down);
+  }
   function grabSelect(p, down) {
     if (down) {
       if (H.grab || !matchOn()) return false;
       const P = grabPoint(p);
-      const c = p.handedness !== 'left' ? cardNear(P) : null;
+      /* what was lit up a moment ago wins: closing your hand shifts the pinch point a little */
+      const c = p.handedness !== 'left' ? (p.hand && H.lastHover && !H.lastHover.held && H.cards.includes(H.lastHover) && document.body.contains(H.lastHover.el) && H.lastHover) || cardNear(P) : null;
       if (c) {
         const r = c.el.getBoundingClientRect();
         const ps = startGrab(p, 'card');
@@ -273,11 +352,12 @@
         XR().pressAt({ kind: 'card', el: c.el, x: r.left + r.width / 2, y: r.top + r.height / 2 }, true, ps);
         return true;
       }
-      const b = boardAt(P, true);
-      if (b && UI().mode.k !== 'armed') {
+      const pc = UI().mode.k !== 'armed' ? (p.hand && H.hoverPiece && H.hoverPiece.p === p ? H.hoverPiece.pc : null) || pieceNear(P) : null;
+      if (pc) {
         const ps = startGrab(p, 'board');
-        Sc().setXRRay(boardRay(P));
-        XR().pressAt(b, true, ps);
+        H.grab.piece = pc;
+        Sc().setXRRay(rayAt(pc.x, pc.z));
+        XR().pressAt(boardPt(pc.x, pc.z), true, ps);
         return true;
       }
       return false;
@@ -290,7 +370,12 @@
     const g = H.grab; if (!g) return;
     if (!g.p.connected || !XR().active) { endGrab(true); return; }
     const mode = UI().mode, P = grabPoint(g.p);
-    if (g.kind === 'board') { const b = boardAt(P, false); if (b) { Sc().setXRRay(boardRay(P)); XR().moveAt(b); g.last = b; } return; }
+    if (g.kind === 'board') {
+      if (!boardAt(P, false)) return;
+      const d = snapDrop(P), b = boardPt(d.x, d.z);
+      Sc().setXRRay(rayAt(d.x, d.z)); XR().moveAt(b); g.last = b; g.lastD = d;
+      return;
+    }
     if (mode.k === 'armed') { aimSpell(P); return; }
     if (mode.k !== 'place') return;
     const b = boardUnder(P);
@@ -302,8 +387,8 @@
     const mode = UI().mode, P = grabPoint(g.p);
     try {
       if (g.kind === 'board') {
-        const b = boardAt(P, false) || g.last;
-        if (b) { Sc().setXRRay(boardRay(P)); XR().pressAt(b, false, g.ps); }
+        const d = boardAt(P, false) ? snapDrop(P) : g.lastD;
+        if (d) { Sc().setXRRay(rayAt(d.x, d.z)); XR().pressAt(boardPt(d.x, d.z), false, g.ps); }
         else { const lc = XR()._st.lastClient; XR().pressAt({ kind: 'none', x: lc.x, y: lc.y }, false, g.ps); }
         return;
       }
@@ -327,6 +412,29 @@
     } finally {
       g.p.poking = false;
       XR()._st.active = g.p.i;
+    }
+  }
+
+  /* ---------- tracked hands: a pinch or a fist is a grab ---------- */
+  function jd(J, a, b) { return J[a].getWorldPosition(tmpA).distanceTo(J[b].getWorldPosition(tmpB)); }
+  function handClosed(J, was) {
+    const need = ['thumb-tip', 'index-finger-tip', 'wrist', 'middle-finger-tip', 'middle-finger-phalanx-proximal', 'ring-finger-tip', 'ring-finger-phalanx-proximal'];
+    if (need.some(n => !J[n]) || !J.wrist.visible) return false;
+    const pinch = jd(J, 'thumb-tip', 'index-finger-tip');
+    /* fingertips pulled back to their knuckles' distance from the wrist means a fist */
+    const curl = (jd(J, 'middle-finger-tip', 'wrist') / jd(J, 'middle-finger-phalanx-proximal', 'wrist') + jd(J, 'ring-finger-tip', 'wrist') / jd(J, 'ring-finger-phalanx-proximal', 'wrist')) / 2;
+    return was ? pinch < 0.04 || curl < 1.45 : pinch < 0.022 || curl < 1.2;
+  }
+  function handGestures() {
+    const st = XR()._st;
+    for (let i = 0; i < H.hands.length; i++) {
+      const p = st.pointers[i], v = H.hands[i];
+      if (!p || !p.connected || !p.hand) { H.closed[i] = false; continue; }
+      const now = handClosed(v.hand.joints || {}, H.closed[i]);
+      if (now === H.closed[i]) continue;
+      H.closed[i] = now;
+      if (now) { if (!st.setup && !st.placing) grabSelect(p, true); }
+      else if (H.grab && H.grab.p === p) grabSelect(p, false);
     }
   }
 
@@ -771,14 +879,7 @@
       const t = touchPlane(q.mesh, P, slack);
       if (t) return { kind: 'panel', panel: q, x: q.rect.left + t.u * q.rect.width, y: q.rect.top + (1 - t.v) * q.rect.height };
     }
-    /* the board itself */
-    if (st.placed && !st.placing) {
-      const l = Sc().board.worldToLocal(P.clone());
-      if (Math.abs(l.x) < 13.5 && Math.abs(l.z) < 12.75 && l.y * XR().scale() < slack && l.y * XR().scale() > -0.05) {
-        const s2 = Sc().boardToScreen(l.x, 0, l.z);
-        return { kind: 'board', x: s2.x, y: s2.y, local: l, world: P.clone() };
-      }
-    }
+    /* the board itself is never poked: pieces on it are grabbed */
     return null;
   }
   function boardRay(P) { return new T.Ray(P.clone().add(new T.Vector3(0, 0.15, 0)), new T.Vector3(0, -1, 0)); }
@@ -835,9 +936,12 @@
     if (!H.strip) buildStrip();
     if (!H.av) { buildAvatar(); layoutAvatar(); }
     for (let i = 0; i < H.hands.length; i++) updateHandViz(H.hands[i]);
+    H.lastHover = H.cards.find(c => c.hover) || null; /* last frame's lit card */
     updateFan(dt);
     updateStrip();
+    handGestures();
     updateGrab();
+    updateHover();
     watchDraws();
     updateAvatar(now);
     for (let i = 0; i < H.hands.length; i++) { updatePoke(i, H.pokes[i]); if (!XR().active || XR()._st.ending) return; /* a tap on Exit just ended the session */ }
@@ -846,7 +950,7 @@
     H.mitts.forEach((m, i) => { const p = st.pointers[i]; m.visible = !!(p && p.connected && !p.hand && H.grips[i].userData.connected); });
     if (!tipped && matchOn() && UI().Game.st.active === 0) {
       tipped = true;
-      setTimeout(() => { if (XR().active && UI().toast) UI().toast('Your cards float over your left hand. Grab one with your right hand and let go over a lane. Pinch your creatures, the slingshot or the bellows on the board to grab them too. Turn your left palm up to see the icons under your sleeve: creatures, spells, hide, end turn and pause.'); }, 2500);
+      setTimeout(() => { if (XR().active && UI().toast) UI().toast('Your cards float over your left hand. Grab one with your right hand and let go over a lane. Reach down and grab your creatures, the slingshot or the bellows on the board too: a ring shows what your hand will pick up. Drop a creature on an enemy to attack. Turn your left palm up for the icons under your sleeve: creatures, spells, hide, end turn and pause.'); }, 2500);
     }
   }
   function beforeSession() {
@@ -872,10 +976,11 @@
     x.hooks.beforeSession.push(beforeSession);
     x.hooks.frame.push(frame);
     x.hooks.aim.push(aimCards);
-    x.hooks.select.push(grabSelect);
+    x.hooks.select.push(selectHook);
+    x.hooks.rayless.push(p => p.hand && matchOn());
     x.hooks.squeeze.push(grabSelect);
     x.hooks.start.push((mode, relayout) => { if (H.av) layoutAvatar(); if (!relayout) { tipped = false; H.drawBase = null; H.drawSt = UI().Game.st; } });
-    x.hooks.stop.push(() => { H.grab = null; if (H.orb) H.orb.visible = false; H.tw.forEach(t => t.res()); H.tw = []; if (H.fan) H.fan.visible = false; if (H.strip) H.strip.root.visible = false; if (H.av) { H.av.root.visible = false; H.av.busy = false; } });
+    x.hooks.stop.push(() => { H.grab = null; H.closed = []; if (H.ring) H.ring.visible = false; if (H.orb) H.orb.visible = false; H.tw.forEach(t => t.res()); H.tw = []; if (H.fan) H.fan.visible = false; if (H.strip) H.strip.root.visible = false; if (H.av) { H.av.root.visible = false; H.av.busy = false; } });
     const hook = () => { if (UI()) UI().aiHook = (a, st) => act(a, st); else setTimeout(hook, 50); };
     hook();
   }

@@ -182,7 +182,7 @@
       '<section><h3>Spells: grab, crush, gesture</h3><p>Attacking draws one of that creature\u2019s own spells into your hand. To cast: press and hold the card until it crushes in your fist. The spell is now armed. Then do its gesture within 10 seconds or it fizzles.</p><ul>' +
       Object.keys(V).map(k => '<li><b style="color:' + VCOL[k] + '">' + V[k].name + ':</b> ' + V[k].how + '</li>').join('') + '</ul></section>' +
       '<section><h3>Surge</h3><p>Every spell you cast fills your Surge meter. At 3 you get a free Surge card: Thunderclap (3 damage to every enemy), Bloom (heal your side) or Stampede (everyone attacks again).</p></section>' +
-      '<section><h3>Structures and the Brawl</h3><p>Build up to two on your half for 2 points each. Structures are worked in the <b>Brawl</b>: a ' + RV.brawlSecs + '-second window after each round where both players work their structures at the same time. Each structure works once per Brawl. The <b>Slingshot</b>: press on it, pull back away from your target, let go. Direct hits deal 3, grazes 1. The <b>Bellows</b>: pump up to three times; the nearest ally gets +1 attack per pump on your next turn.</p></section>' +
+      '<section><h3>Structures</h3><p>Build up to two on your half for 2 points each. Structures work on your turn, alongside your creatures: each one once per turn, even the turn you build it. The <b>Slingshot</b>: press on it, pull back away from your target, let go. Direct hits deal 3, grazes 1. The <b>Bellows</b>: pump up to three times; the nearest ally gets +1 attack per pump for the rest of the turn.</p></section>' +
       '<section><h3>Keywords</h3><ul>' + Object.keys(R.KEYWORDS).map(k => '<li><b>' + R.KEYWORDS[k].name + ':</b> ' + esc(R.KEYWORDS[k].text) + '</li>').join('') + '</ul></section>' +
       '<section><h3>Controls</h3><table class="ctl">' +
       '<tr><td>Place a creature</td><td>Click its card, then click a glowing lane (or drag the card onto it)</td></tr>' +
@@ -706,7 +706,7 @@
         if (t.sid === 'slingshot') { mode = { k: 'sling', suid, land: null }; A.play('stretch'); return; }
         startPump(suid); mode.pressT = now(); return;
       }
-      if (t) { A.play('deny'); toast(R.isV2(st) && !inBrawl() ? 'Structures are worked in the Brawl, right after your opponent\u2019s turn.' : t.used ? (inBrawl() ? 'Already used in this Brawl.' : 'Already used this turn.') : 'Place a creature first so the bellows has someone to power.'); }
+      if (t) { A.play('deny'); toast(t.used ? 'Already used this turn.' : 'Place a creature first so the bellows has someone to power.'); }
     }
     pointer.orbit = true;
   }
@@ -1030,8 +1030,7 @@
     const t = R.structById(st, suid); if (!t) return '';
     const s = R.STRUCTURES[t.sid];
     return '<h4>' + s.name + ' <span style="font-size:.8rem;color:' + (t.side ? 'var(--foe)' : 'var(--you)') + '">' + (t.side ? 'Enemy' : 'Yours') + '</span></h4><p>' + esc(s.text) + '</p>' +
-      (R.isV2(st) && !inBrawl() ? '<p>Works in the Brawl, after your opponent\u2019s turn.</p>' : '') +
-      (t.side === 0 && (inBrawl() || !R.isV2(st)) ? (t.used ? '<p class="warn">Used this turn</p>' : '<p class="good">' + (t.sid === 'slingshot' ? 'Press on it and pull back away from your target.' : 'Click it, then press and release to pump.') + '</p>') : '');
+      (t.side === 0 && st.active === 0 ? (t.used ? '<p class="warn">Used this turn</p>' : '<p class="good">' + (t.sid === 'slingshot' ? 'Press on it and pull back away from your target.' : 'Click it, then press and release to pump.') + '</p>') : '');
   }
   function overKeeper(e, g) {
     if (!mode.keeper) return false;
@@ -1041,7 +1040,7 @@
   }
   function structText(sid) {
     if (!Game.st || !R.isV2(Game.st)) return R.STRUCTURES[sid].text;
-    return sid === 'slingshot' ? 'In each Brawl: pull back and let go. A direct hit deals 3, a graze 1.' : 'In each Brawl: pump up to 3 times. The nearest ally gets +1 attack per pump on your next turn.';
+    return sid === 'slingshot' ? 'Once a turn: pull back and let go. A direct hit deals 3, a graze 1.' : 'Once a turn: pump up to 3 times. The nearest ally gets +1 attack per pump this turn.';
   }
   function keeperAttackTip(uid) {
     const st = Game.st, u = R.unitById(st, uid), d = R.keeperDamage(st, u) * R.keeperMult(st), hp = st.sides[1].hp;
